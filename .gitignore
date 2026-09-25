@@ -1,0 +1,9 @@
+build/
+obj/
+ClockAndLedger.app/
+Documentation/API/
+.DS_Store
+*.o
+*.app
+.DS_Store
+build

@@ -1,0 +1,103 @@
+#import <AppKit/AppKit.h>
+#import <PDFKit/PDFKit.h>
+#import "CLInvoiceView.h"
+#import "CLLedger.h"
+#import "CLQuickBooksImporter.h"
+
+/** Verify actual multi-page PDF output through AppKit's print pipeline. */
+int
+main (void)
+{
+  NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+  NSMutableDictionary *invoice;
+  NSDictionary *client;
+  NSDictionary *business;
+  NSMutableArray *lines = [NSMutableArray array];
+  CLInvoiceView *view;
+  NSRange pages;
+  NSPrintInfo *info;
+  NSPrintOperation *operation;
+  PDFDocument *pdf;
+  NSString *path = [[[NSFileManager defaultManager] currentDirectoryPath]
+    stringByAppendingPathComponent: @"build/Invoice-pagination-test.pdf"];
+  unsigned int i;
+  int result = 0;
+  [NSApplication sharedApplication];
+  client = [NSDictionary dictionaryWithObjectsAndKeys: @"Example Client", @"name",
+    @"123 Example Street\nExample City", @"address", @"billing@example.test", @"email", nil];
+  business = [NSDictionary dictionaryWithObjectsAndKeys: @"Example Business", @"name",
+    @"456 Sample Lane", @"address", @"hello@example.test", @"email", @"USD", @"currency",
+    @"FINAL PAYMENT INSTRUCTIONS", @"notes", nil];
+  for (i = 0; i < 80; i++)
+    [lines addObject: [NSDictionary dictionaryWithObjectsAndKeys:
+      @"2026-09-25", @"date", [NSString stringWithFormat:
+        @"Service %u: A lengthy description that must wrap without clipping or losing any words at the printable page boundary.", i + 1], @"description",
+      [NSNumber numberWithInt: 3600], @"seconds", [NSNumber numberWithInt: 10000], @"rate",
+      [NSNumber numberWithInt: 10000], @"amount", nil]];
+  invoice = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+    @"INV-TEST", @"id", @"2026-09-25", @"date", @"2026-10-25", @"dueDate",
+    client, @"client", business, @"business", lines, @"lines",
+    @"0", @"taxPercent", [NSNumber numberWithInt: 800000], @"subtotal",
+    [NSNumber numberWithInt: 0], @"tax", [NSNumber numberWithInt: 800000], @"total",
+    [NSNumber numberWithBool: NO], @"paid", nil];
+  view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+  [view knowsPageRange: &pages];
+  info = [[[NSPrintInfo sharedPrintInfo] copy] autorelease];
+  [info setTopMargin: 30];
+  [info setBottomMargin: 30];
+  [info setLeftMargin: 30];
+  [info setRightMargin: 30];
+  [[info dictionary] setObject: NSPrintSaveJob forKey: NSPrintJobDisposition];
+  [[info dictionary] setObject: path forKey: NSPrintSavePath];
+  operation = [NSPrintOperation printOperationWithView: view printInfo: info];
+  [operation setShowsPrintPanel: NO];
+  [operation setShowsProgressPanel: NO];
+  if (![operation runOperation])
+    result = 1;
+  pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: path]];
+  if (pdf == nil || [pdf pageCount] != pages.length || pages.length < 2
+      || [[pdf string] rangeOfString: @"FINAL PAYMENT INSTRUCTIONS"].location == NSNotFound
+      || [[pdf string] rangeOfString: @"Service 80"].location == NSNotFound)
+    result = 1;
+  NSLog (@"%@: printed %lu pages; final service and payment instructions preserved",
+    result == 0 ? @"PASS" : @"FAIL", (unsigned long)[pdf pageCount]);
+  [pdf release];
+  [view release];
+  {
+    NSString *error = nil;
+    NSDictionary *parsed = [CLQuickBooksImporter recordsFromData:
+      [NSData dataWithContentsOfFile: @"Tests/Fixtures/Intuit-invoice-sales-tax.iif"]
+      filename: @"invoice.iif" error: &error];
+    NSMutableDictionary *imported = [NSMutableDictionary dictionaryWithDictionary:
+      [[parsed objectForKey: @"invoices"] objectAtIndex: 0]];
+    NSString *importedPath = [[[NSFileManager defaultManager] currentDirectoryPath]
+      stringByAppendingPathComponent: @"build/QuickBooks-import-test.pdf"];
+    NSString *printed;
+    [imported setObject: business forKey: @"business"];
+    [imported setObject: [[parsed objectForKey: @"clients"] objectAtIndex: 0] forKey: @"client"];
+    [imported setObject: @"INV-00001" forKey: @"id"];
+    view = [[CLInvoiceView alloc] initWithInvoice: imported];
+    [[info dictionary] setObject: importedPath forKey: NSPrintSavePath];
+    operation = [NSPrintOperation printOperationWithView: view printInfo: info];
+    [operation setShowsPrintPanel: NO];
+    [operation setShowsProgressPanel: NO];
+    if (![operation runOperation])
+      result = 1;
+    pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: importedPath]];
+    printed = [pdf string];
+    if (pdf == nil || [pdf pageCount] != 1
+        || [printed rangeOfString: @"220.89"].location == NSNotFound
+        || [printed rangeOfString: @"205.00"].location == NSNotFound
+        || [printed rangeOfString: @"15.89"].location == NSNotFound
+        || [printed rangeOfString: @"Tax (imported)"].location == NSNotFound
+        || [printed rangeOfString: @"VERIFY PAYMENT"].location == NSNotFound
+        || [printed rangeOfString: @"hours x"].location != NSNotFound)
+      result = 1;
+    NSLog (@"%@: imported invoice PDF preserves original amounts and review status",
+      result == 0 ? @"PASS" : @"FAIL");
+    [pdf release];
+    [view release];
+  }
+  [pool drain];
+  return result;
+}

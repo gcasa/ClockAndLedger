@@ -1,0 +1,3 @@
+Customer,Date,Duration,Description,Rate,Billable status,Time ID,Currency
+Example Studio,2026-09-25,1:30,Design consultation,125.50,Billable,EXAMPLE-T1,USD
+Example Studio,2026-09-25,0:30,Internal meeting,125.50,Not Billable,EXAMPLE-T2,USD

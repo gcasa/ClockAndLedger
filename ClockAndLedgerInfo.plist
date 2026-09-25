@@ -1,0 +1,6 @@
+{
+  ApplicationName = ClockAndLedger;
+  ApplicationDescription = "Desktop time tracking and invoicing";
+  ApplicationRelease = "0.1.0";
+  NSPrincipalClass = NSApplication;
+}
