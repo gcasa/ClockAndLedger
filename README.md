@@ -10,8 +10,13 @@ Source uses GNU C brace/indentation conventions and autogsdoc API comments.
 - Create and edit clients, addresses, email and default hourly rates.
 - Start/stop one live timer; it survives restarts and includes time while the
   application is closed or the computer sleeps.
-- Add dated manual time, view hours and charges, and delete unbilled mistakes.
-- Issue sequential invoices from all unbilled entries for a selected client.
+- Enter an individual date, a weekly/monthly total, or daily hours in a weekly
+  or monthly timesheet. View hours and charges and delete unbilled mistakes.
+- Define tasks per client with separate hourly rates; edit, archive and restore
+  tasks while preserving the rates and names on existing time/invoices.
+- Bill a raw number of hours at a client's current hourly rate, with no timesheet required.
+- Optionally convert a client's unbilled timesheet hours into an invoice at their recorded rates.
+- Open an email draft to the client's current email address with complete invoice text.
 - Preserve original time rates and invoice snapshots when client/business
   details change. Billed time is locked against deletion or duplicate billing.
 - Set a tax percentage and due date; mark invoices paid/unpaid and see overdue
@@ -64,18 +69,32 @@ The app is created at `build/ClockAndLedger.app`. It is a local unsigned build.
 
 1. Open **Business**, enter your business and payment details, choose a
    currency, then save. All monetary values use two decimal places.
-2. Open **Clients** and add a client with their hourly rate.
-3. Open **Time**, choose the client, enter a description, and start the timer;
-   stop it to record a charge. Or choose **Add Manual Time** and enter decimal
-   hours (`1.5` means 1 hour 30 minutes).
-4. Open **Invoices**, choose the client, tax percentage and due date, then
-   **Create Invoice**. The invoice captures all their unbilled entries. A
-   running timer is excluded until stopped.
-5. Preview/print the invoice, and toggle its status when payment arrives.
+2. Open **Clients** and add a client with their hourly rate and **Net payment days** (default 30; 0 means due on receipt). Invoice due dates are calculated by adding these calendar days to the issue date, for both direct billing and timesheet invoices. You can override the due date before issuing an invoice. Changing client terms does not change existing invoices.
+3. In **Client Tasks**, select a client and add work types such as Design,
+   Development or Support, each with its own hourly rate.
+4. Optionally open **Timesheets**, choose the client and task (or **Client default**), and enter
+   optional notes. Start/stop the timer, or choose **Day**, **Week** or **Month**,
+   enter a date within that period, choose an entry method and click **Add Time…**.
+   **One total for period** creates one entry for the entire range.
+   **Daily timesheet** opens a row for every date; enter decimal hours
+   (`1.5` means 1 hour 30 minutes) and leave unused days blank or zero.
+   A description is required when using the client default rate.
+5. Open **Invoices**, choose the client and enter a raw number of **Hours**,
+   tax percentage and due date, then **Create Invoice**. Billing uses the displayed
+   client rate and does not consume or create timesheet entries. Alternatively,
+   in **Timesheets**, review the selected client's total and available hours and
+   use **Create Invoice…** to convert all their unbilled time at its recorded rates.
+   A running timer is excluded until stopped. Converted entries cannot be billed again.
+6. Preview/print the invoice, or click **Email Invoice…** to open a draft in your
+   default email application, addressed to the client's current email. The full
+   invoice is included as text in the message; review it and send from that app.
+   A configured email application is required. Use **Mark Paid / Unpaid** when
+   payment arrives. Both paid and unpaid invoices remain in the invoice history.
 
 Rates and amounts use `.` as the decimal separator. Dates use `YYYY-MM-DD`.
 Tax is a user-entered percentage, not a jurisdiction-specific tax calculation.
-Manual hours accept up to four decimal places and are truncated to whole
+Direct invoice hours accept up to four decimal places and are billed exactly as
+entered (up to 8760 hours per invoice). Timesheet hours accept up to four decimal places and are truncated to whole
 seconds. Charges use exact decimal math and round half-up to cents per line;
 tax rounds once on the subtotal. Displayed hours are rounded to four places.
 Currency cannot change after any time is recorded; separate currencies require
@@ -106,7 +125,7 @@ time. Data is stored locally in plaintext; backup copies use the same format.
 macOS model tests:
 
 ```sh
-make -f Makefile test test-import
+make -f Makefile test test-import test-time
 ```
 
 Native macOS print-pipeline test (writes an 80-entry, multi-page sample PDF
@@ -134,6 +153,9 @@ docker build -f Tests/Dockerfile -t clockandledger-test .
 Tests cover decimal validation/rounding, invalid dates/durations, rate and
 invoice snapshots, duplicate billing, locked billed time, payment status,
 recovered timers, sequential numbering, write rollback and corrupt files.
+Task/calendar tests also cover leap years, Monday–Sunday week boundaries,
+daylight-saving changes, task ownership, historical rate snapshots, archived
+tasks, restart recovery, legacy ledgers and atomic timesheet writes.
 Model tests use temporary directories and never touch the application's ledger.
 
 ## Source and documentation
@@ -162,3 +184,35 @@ Both builds include the clock-and-ledger icon. GNUstep packages a transparent
 PNG and generates the `NSIcon` and desktop launcher entries; macOS packages a
 multi-resolution ICNS. Artwork, the generation prompt, and regeneration
 instructions are in [Resources/Artwork/README.md](Resources/Artwork/README.md).
+
+## Time periods and task rates
+
+Weeks run Monday–Sunday; months use their actual calendar dates, including
+February 29 in leap years. The date field takes any `YYYY-MM-DD` within the
+chosen week or month, and the resolved range appears below it.
+
+A timesheet uses one client and one task/rate for all its entered days. Repeat
+for other tasks as needed. Blank and zero-hour days are omitted. Every populated
+row is validated before saving, so one invalid row saves nothing and leaves the
+form available for correction. Each save **adds** time; it does not replace an
+earlier timesheet. Period totals and daily entries are alternative ways to
+record work: avoid entering the same work through both methods.
+
+Time entries preserve their task name, rate and date/range at recording time;
+timers capture these when started. Renaming a task or changing its rate affects
+future work only. Archive tasks to remove them from new-entry choices; restore
+them in **Client Tasks** when needed. Archived tasks remain visible on past time
+and invoices, and an already-running timer can still be stopped.
+
+Invoices include each entry's task and date range and charge a weekly/monthly
+total exactly once. Existing ledgers and imported time without task assignments
+continue using their stored rates. New timers persist an absolute numeric start
+time as well as a date to avoid timezone-dependent date decoding in GNUstep.
+
+### Business branding and invoice numbers
+
+In **Business**, choose a PNG, JPEG, TIFF or icon image (up to 5 MB), then save your business details. The logo appears on invoice previews and printed/PDF pages, with its proportions preserved. Logo bytes are stored in the ledger and each issued invoice, so moving the original image or replacing/removing your logo does not change older invoices. Email drafts remain plain text; use Print to save a branded PDF.
+
+Set **Starting invoice number** before issuing or importing your first invoice. Leaving it blank starts at 1 (`INV-00001`); entering 500 starts at `INV-00500`, followed by `INV-00501`. The starting number is fixed once invoices exist. Existing ledgers keep their numbering, and imported invoices keep displaying their original QuickBooks numbers.
+
+To delete an invoice, select it in **Invoices** and click **Delete Invoice…**. The confirmation defaults to Cancel and warns that deletion cannot be undone. Confirming removes the invoice and its payment status from the ledger totals and returns linked time entries to unbilled status. Standalone invoices do not create time entries when deleted. Deleted invoice numbers remain reserved, even if every invoice is deleted. Printed/emailed copies and QuickBooks records are unaffected; deleting a paid invoice does not refund payment.

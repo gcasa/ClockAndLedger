@@ -39,6 +39,11 @@ CLAppendRows (NSMutableArray *rows, NSString *text)
       NSString *currency = [business objectForKey: @"currency"];
       unsigned int i;
       _invoice = [invoice copy];
+      if ([business objectForKey: @"logoData"] != nil)
+        _logo = [[NSImage alloc] initWithData: [business objectForKey: @"logoData"]];
+      if (![_logo isValid] || [_logo size].width <= 0 || [_logo size].height <= 0)
+        { [_logo release]; _logo = nil; }
+      _rowsPerPage = _logo != nil ? 40 : 48;
       CLAppendRows (rows, [business objectForKey: @"name"]);
       CLAppendRows (rows, [business objectForKey: @"address"]);
       CLAppendRows (rows, [business objectForKey: @"email"]);
@@ -57,13 +62,13 @@ CLAppendRows (NSMutableArray *rows, NSString *text)
         {
           NSDictionary *line = [lines objectAtIndex: i];
           CLAppendRows (rows, [NSString stringWithFormat: @"%@  |  %@",
-            [line objectForKey: @"date"], [line objectForKey: @"description"]]);
+            [CLLedger dateLabelForEntry: line], [CLLedger workLabelForEntry: line]]);
           if ([[line objectForKey: @"importedAmount"] boolValue])
             CLAppendRows (rows, [NSString stringWithFormat: @"    Amount: %@ %@", currency,
               [CLLedger money: [line objectForKey: @"amount"]]]);
           else
             CLAppendRows (rows, [NSString stringWithFormat: @"    %.4f hours x %@ %@/hr                 %@ %@",
-            [[line objectForKey: @"seconds"] doubleValue] / 3600.0,
+            [line objectForKey: @"hours"] != nil ? [[line objectForKey: @"hours"] doubleValue] : [[line objectForKey: @"seconds"] doubleValue] / 3600.0,
             currency, [CLLedger money: [line objectForKey: @"rate"]],
             currency, [CLLedger money: [line objectForKey: @"amount"]]]);
           CLAppendRows (rows, @"");
@@ -82,7 +87,7 @@ CLAppendRows (NSMutableArray *rows, NSString *text)
       CLAppendRows (rows, [[invoice objectForKey: @"paymentUnverified"] boolValue] ? @"Status: VERIFY PAYMENT IN QUICKBOOKS" : ([[invoice objectForKey: @"paid"] boolValue] ? @"Status: PAID" : @"Status: UNPAID"));
       CLAppendRows (rows, [business objectForKey: @"notes"]);
       _rows = [rows copy];
-      _pageCount = MAX (1, (unsigned int)([_rows count] + 47) / 48);
+      _pageCount = MAX (1, (unsigned int)([_rows count] + _rowsPerPage - 1) / _rowsPerPage);
       [self setFrameSize: NSMakeSize (520, 720 * _pageCount)];
     }
   return self;
@@ -92,6 +97,7 @@ CLAppendRows (NSMutableArray *rows, NSString *text)
 {
   [_invoice release];
   [_rows release];
+  [_logo release];
   [super dealloc];
 }
 
@@ -130,13 +136,27 @@ CLAppendRows (NSMutableArray *rows, NSString *text)
         continue;
       [[NSString stringWithFormat: @"INVOICE  %@", [CLLedger invoiceNumber: _invoice]]
         drawAtPoint: NSMakePoint (12, top + 15) withAttributes: heading];
-      for (row = 0; row < 48 && page * 48 + row < [_rows count]; row++)
-        [[_rows objectAtIndex: page * 48 + row]
-          drawAtPoint: NSMakePoint (12, top + 60 + row * 13) withAttributes: body];
+      if (_logo != nil)
+        {
+          NSSize size = [_logo size];
+          CGFloat scale = MIN (180 / size.width, 85 / size.height);
+          [_logo drawInRect: NSMakeRect (12, top + 55, size.width * scale, size.height * scale)
+                  fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1
+            respectFlipped: YES hints: nil];
+        }
+      for (row = 0; row < _rowsPerPage && page * _rowsPerPage + row < [_rows count]; row++)
+        [[_rows objectAtIndex: page * _rowsPerPage + row]
+          drawAtPoint: NSMakePoint (12, top + (_logo != nil ? 164 : 60) + row * 13) withAttributes: body];
       [[NSString stringWithFormat: @"%@  |  Page %u of %u",
         [CLLedger invoiceNumber: _invoice], page + 1, _pageCount]
         drawAtPoint: NSMakePoint (12, top + 697) withAttributes: body];
     }
+}
+
+- (NSString *) emailText
+{
+  return [NSString stringWithFormat: @"Invoice %@\n\n%@", [CLLedger invoiceNumber: _invoice],
+    [_rows componentsJoinedByString: @"\n"]];
 }
 
 - (void) printInvoice: (id)sender

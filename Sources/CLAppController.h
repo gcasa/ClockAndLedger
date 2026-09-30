@@ -9,15 +9,27 @@
   NSWindow *_window;
   NSTableView *_clientsTable;
   NSTableView *_timeTable;
+  NSTableView *_tasksTable;
+  NSPopUpButton *_tasksClient;
+  NSPopUpButton *_timeTask;
+  NSPopUpButton *_periodChoice;
+  NSPopUpButton *_entryMode;
+  NSTextField *_periodDate;
+  NSTextField *_periodLabel;
   NSTableView *_invoicesTable;
   NSPopUpButton *_timeClient;
   NSPopUpButton *_invoiceClient;
   NSTextField *_taskField;
   NSTextField *_timerLabel;
   NSTextField *_summaryLabel;
+  NSTextField *_invoiceHours;
+  NSTextField *_timesheetTotal;
+  NSTextField *_invoiceRate;
   NSTextField *_taxField;
   NSTextField *_dueField;
   NSMutableDictionary *_businessFields;
+  NSData *_businessLogoData;
+  NSImageView *_businessLogoPreview;
   NSTimer *_pulse;
   NSPanel *_dialog;
   BOOL _dialogAccepted;
@@ -36,7 +48,19 @@
 - (void) editClient: (id)sender;
 /** Delete an unused client after confirmation. */
 - (void) deleteClient: (id)sender;
-/** Add a dated manual time entry. */
+/** Refresh task choices when the time-entry client changes. */
+- (void) timeClientChanged: (id)sender;
+/** Refresh the selected client's task list. */
+- (void) tasksClientChanged: (id)sender;
+/** Add a task and hourly rate for the selected client. */
+- (void) addTask: (id)sender;
+/** Edit a task name/rate without changing historical time. */
+- (void) editTask: (id)sender;
+/** Archive or restore the selected task. */
+- (void) archiveTask: (id)sender;
+/** Update the date-range explanation for daily, weekly or monthly entry. */
+- (void) periodChanged: (id)sender;
+/** Add a day/week/month total or open the daily timesheet for that period. */
 - (void) addTime: (id)sender;
 /** Delete selected unbilled time after confirmation. */
 - (void) deleteTime: (id)sender;
@@ -44,14 +68,24 @@
 - (void) startTimer: (id)sender;
 /** Stop and record the current timer. */
 - (void) stopTimer: (id)sender;
-/** Create an invoice for the chosen client's unbilled time. */
+/** Update the displayed billing rate. */
+- (void) invoiceClientChanged: (id)sender;
+/** Convert the selected timesheet client's unbilled time to an invoice. */
+- (void) invoiceTimesheet: (id)sender;
+/** Open an email draft containing the selected invoice. */
+- (void) emailInvoice: (id)sender;
+/** Create an invoice from a raw number of hours. */
 - (void) createInvoice: (id)sender;
 /** Display the selected invoice in a printable preview. */
 - (void) previewInvoice: (id)sender;
 /** Print the selected invoice with the system print panel. */
 - (void) printInvoice: (id)sender;
+/** Warn and confirm before permanently deleting the selected invoice. */
+- (void) deleteInvoice: (id)sender;
 /** Mark an invoice paid or unpaid. */
 - (void) togglePaid: (id)sender;
+- (void) chooseBusinessLogo: (id)sender;
+- (void) removeBusinessLogo: (id)sender;
 /** Save the business form. */
 - (void) saveBusiness: (id)sender;
 /** Choose an export, review its records and save an atomic QuickBooks import. */

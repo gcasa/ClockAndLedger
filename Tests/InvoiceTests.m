@@ -34,13 +34,36 @@ main (void)
         @"Service %u: A lengthy description that must wrap without clipping or losing any words at the printable page boundary.", i + 1], @"description",
       [NSNumber numberWithInt: 3600], @"seconds", [NSNumber numberWithInt: 10000], @"rate",
       [NSNumber numberWithInt: 10000], @"amount", nil]];
+  {
+    NSMutableDictionary *firstLine = [NSMutableDictionary dictionaryWithDictionary: [lines objectAtIndex: 0]];
+    [firstLine setObject: @"2026-09-21" forKey: @"date"];
+    [firstLine setObject: @"2026-09-27" forKey: @"periodEnd"];
+    [firstLine setObject: @"week" forKey: @"periodKind"];
+    [firstLine setObject: @"Design consulting" forKey: @"taskName"];
+    [lines replaceObjectAtIndex: 0 withObject: firstLine];
+  }
   invoice = [NSMutableDictionary dictionaryWithObjectsAndKeys:
     @"INV-TEST", @"id", @"2026-09-25", @"date", @"2026-10-25", @"dueDate",
     client, @"client", business, @"business", lines, @"lines",
     @"0", @"taxPercent", [NSNumber numberWithInt: 800000], @"subtotal",
     [NSNumber numberWithInt: 0], @"tax", [NSNumber numberWithInt: 800000], @"total",
     [NSNumber numberWithBool: NO], @"paid", nil];
+  {
+    NSImage *logo = [[[NSImage alloc] initWithSize: NSMakeSize (160, 80)] autorelease];
+    NSMutableDictionary *branded = [NSMutableDictionary dictionaryWithDictionary: business];
+    [logo lockFocus];
+    [[NSColor redColor] set];
+    NSRectFill (NSMakeRect (0, 0, 160, 80));
+    [logo unlockFocus];
+    [branded setObject: [logo TIFFRepresentation] forKey: @"logoData"];
+    [invoice setObject: branded forKey: @"business"];
+  }
   view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+  if ([[view emailText] rangeOfString: @"Invoice INV-TEST"].location == NSNotFound
+      || [[view emailText] rangeOfString: @"Service 80"].location == NSNotFound
+      || [[view emailText] rangeOfString: @"FINAL PAYMENT INSTRUCTIONS"].location == NSNotFound
+      || [[view emailText] rangeOfString: @"billing@example.test"].location == NSNotFound)
+    result = 1;
   [view knowsPageRange: &pages];
   info = [[[NSPrintInfo sharedPrintInfo] copy] autorelease];
   [info setTopMargin: 30];
@@ -57,8 +80,25 @@ main (void)
   pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: path]];
   if (pdf == nil || [pdf pageCount] != pages.length || pages.length < 2
       || [[pdf string] rangeOfString: @"FINAL PAYMENT INSTRUCTIONS"].location == NSNotFound
-      || [[pdf string] rangeOfString: @"Service 80"].location == NSNotFound)
+      || [[pdf string] rangeOfString: @"Service 80"].location == NSNotFound
+      || [[pdf string] rangeOfString: @"2026-09-27"].location == NSNotFound
+      || [[pdf string] rangeOfString: @"Design consulting"].location == NSNotFound)
     result = 1;
+  {
+    NSImage *render = [[pdf pageAtIndex: 0] thumbnailOfSize: NSMakeSize (612, 792) forBox: kPDFDisplayBoxMediaBox];
+    NSBitmapImageRep *bitmap = [NSBitmapImageRep imageRepWithData: [render TIFFRepresentation]];
+    NSInteger x, y;
+    NSUInteger redPixels = 0;
+    for (y = 0; y < [bitmap pixelsHigh]; y++)
+      for (x = 0; x < [bitmap pixelsWide]; x++)
+        {
+          NSColor *color = [[bitmap colorAtX: x y: y] colorUsingColorSpaceName: NSCalibratedRGBColorSpace];
+          if ([color redComponent] > 0.8 && [color greenComponent] < 0.2 && [color blueComponent] < 0.2)
+            redPixels++;
+        }
+    if (redPixels < 1000) result = 1;
+    NSLog (@"Logo rendered in PDF: %lu red pixels", (unsigned long)redPixels);
+  }
   NSLog (@"%@: printed %lu pages; final service and payment instructions preserved",
     result == 0 ? @"PASS" : @"FAIL", (unsigned long)[pdf pageCount]);
   [pdf release];

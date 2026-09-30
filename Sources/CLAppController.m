@@ -64,6 +64,12 @@ CLLedgerPath (void)
 - (NSDictionary *) editForm: (NSString *)title labels: (NSArray *)labels values: (NSArray *)values;
 /** Edit a client, retaining entered values across validation failures. */
 - (void) editClientRecord: (NSDictionary *)client;
+/** Rebuild the selected client's active task menu with current rates. */
+- (void) fillTimeTasks;
+/** Edit task definition while retaining form values after invalid input. */
+- (void) editTaskRecord: (NSDictionary *)task;
+/** Enter daily hours for a resolved calendar period and save them atomically. */
+- (void) enterTimesheet: (NSDictionary *)period;
 @end
 
 @implementation CLAppController
@@ -74,6 +80,7 @@ CLLedgerPath (void)
   [_pulse release];
   [_window release];
   [_businessFields release];
+  [_businessLogoData release];
   [_ledger release];
   [_lock release];
   [super dealloc];
@@ -156,58 +163,102 @@ CLLedgerPath (void)
 
   view = [self tab: @"Clients" in: tabs];
   CLLabel (view, @"Your clients", NSMakeRect (18, 496, 600, 28), 20);
-  CLLabel (view, @"Contact details and default hourly rates. Existing time keeps its original rate.", NSMakeRect (18, 467, 940, 24), 12);
+  CLLabel (view, @"Contact details, hourly rates and net payment days. Use 0 days for payment due on receipt.", NSMakeRect (18, 467, 940, 24), 12);
   _clientsTable = [self tableIn: view
-    columns: [NSArray arrayWithObjects: @"name", @"email", @"address", @"rate", nil]
-    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 220], [NSNumber numberWithInt: 240], [NSNumber numberWithInt: 350], [NSNumber numberWithInt: 120], nil]];
+    columns: [NSArray arrayWithObjects: @"name", @"email", @"address", @"rate", @"netDays", nil]
+    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 220], [NSNumber numberWithInt: 240], [NSNumber numberWithInt: 230], [NSNumber numberWithInt: 120], [NSNumber numberWithInt: 120], nil]];
   [_clientsTable setDoubleAction: @selector(editClient:)];
   [_clientsTable setTarget: self];
   CLButton (view, @"Add Client", NSMakeRect (12, 12, 130, 32), self, @selector(addClient:));
   CLButton (view, @"Edit", NSMakeRect (148, 12, 100, 32), self, @selector(editClient:));
   CLButton (view, @"Delete", NSMakeRect (254, 12, 100, 32), self, @selector(deleteClient:));
 
-  view = [self tab: @"Time" in: tabs];
-  CLLabel (view, @"Track your work", NSMakeRect (18, 500, 280, 28), 20);
-  _timeClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 459, 220, 28) pullsDown: NO] autorelease];
-  [view addSubview: _timeClient];
-  _taskField = CLField (view, @"", NSMakeRect (249, 460, 393, 26));
-  [_taskField setToolTip: @"Describe the work before starting a timer."];
-  CLLabel (view, @"Work description", NSMakeRect (249, 488, 220, 18), 11);
-  CLButton (view, @"Start", NSMakeRect (650, 455, 88, 34), self, @selector(startTimer:));
-  CLButton (view, @"Stop", NSMakeRect (742, 455, 88, 34), self, @selector(stopTimer:));
-  _timerLabel = CLLabel (view, @"No timer running", NSMakeRect (18, 425, 936, 25), 13);
-  _timeTable = [self tableIn: view
-    columns: [NSArray arrayWithObjects: @"date", @"client", @"description", @"hours", @"amount", @"billing", nil]
-    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 155], [NSNumber numberWithInt: 340], [NSNumber numberWithInt: 80], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 145], nil]];
-  [[_timeTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 359)];
-  CLButton (view, @"Add Manual Time", NSMakeRect (12, 12, 170, 32), self, @selector(addTime:));
-  CLButton (view, @"Delete Unbilled Entry", NSMakeRect (186, 12, 210, 32), self, @selector(deleteTime:));
+  view = [self tab: @"Client Tasks" in: tabs];
+  CLLabel (view, @"Tasks & hourly rates", NSMakeRect (18, 500, 700, 28), 20);
+  _tasksClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 453, 280, 28) pullsDown: NO] autorelease];
+  [_tasksClient setTarget: self];
+  [_tasksClient setAction: @selector(tasksClientChanged:)];
+  [view addSubview: _tasksClient];
+  CLLabel (view, @"Each client can have different tasks and rates. Changes apply to future time.", NSMakeRect (310, 452, 635, 28), 12);
+  _tasksTable = [self tableIn: view
+    columns: [NSArray arrayWithObjects: @"name", @"rate", @"status", nil]
+    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 560], [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 180], nil]];
+  [[_tasksTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 380)];
+  [_tasksTable setTarget: self];
+  [_tasksTable setDoubleAction: @selector(editTask:)];
+  CLButton (view, @"Add Task", NSMakeRect (12, 12, 130, 32), self, @selector(addTask:));
+  CLButton (view, @"Edit Task", NSMakeRect (148, 12, 130, 32), self, @selector(editTask:));
+  CLButton (view, @"Archive / Restore", NSMakeRect (284, 12, 190, 32), self, @selector(archiveTask:));
 
+  view = [self tab: @"Timesheets" in: tabs];
+  CLLabel (view, @"Track your work", NSMakeRect (18, 500, 280, 28), 20);
+  CLLabel (view, @"Client", NSMakeRect (18, 480, 220, 18), 11);
+  _timeClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 451, 235, 28) pullsDown: NO] autorelease];
+  [_timeClient setTarget: self];
+  [_timeClient setAction: @selector(timeClientChanged:)];
+  [view addSubview: _timeClient];
+  CLLabel (view, @"Task / hourly rate", NSMakeRect (267, 480, 450, 18), 11);
+  _timeTask = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (267, 451, 470, 28) pullsDown: NO] autorelease];
+  [view addSubview: _timeTask];
+  CLLabel (view, @"Work description (optional when using a task)", NSMakeRect (18, 429, 600, 18), 11);
+  _taskField = CLField (view, @"", NSMakeRect (18, 400, 630, 26));
+  CLButton (view, @"Start Timer", NSMakeRect (662, 396, 132, 34), self, @selector(startTimer:));
+  CLButton (view, @"Stop", NSMakeRect (804, 396, 88, 34), self, @selector(stopTimer:));
+  CLLabel (view, @"Period", NSMakeRect (18, 376, 130, 18), 11);
+  _periodChoice = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 347, 130, 28) pullsDown: NO] autorelease];
+  [_periodChoice addItemsWithTitles: [NSArray arrayWithObjects: @"Day", @"Week", @"Month", nil]];
+  [_periodChoice setTarget: self];
+  [_periodChoice setAction: @selector(periodChanged:)];
+  [view addSubview: _periodChoice];
+  CLLabel (view, @"Date in period (YYYY-MM-DD)", NSMakeRect (160, 376, 210, 18), 11);
+  _periodDate = CLField (view, [CLLedger today], NSMakeRect (160, 349, 195, 26));
+  [_periodDate setTarget: self];
+  [_periodDate setAction: @selector(periodChanged:)];
+  CLLabel (view, @"Entry method", NSMakeRect (370, 376, 240, 18), 11);
+  _entryMode = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (370, 347, 240, 28) pullsDown: NO] autorelease];
+  [_entryMode addItemsWithTitles: [NSArray arrayWithObjects: @"One total for period", @"Daily timesheet", nil]];
+  [view addSubview: _entryMode];
+  _periodLabel = CLLabel (view, @"", NSMakeRect (18, 321, 936, 22), 12);
+  _timerLabel = CLLabel (view, @"No timer running", NSMakeRect (18, 292, 936, 25), 12);
+  _timeTable = [self tableIn: view
+    columns: [NSArray arrayWithObjects: @"date", @"client", @"taskName", @"description", @"hours", @"rate", @"amount", @"billing", nil]
+    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 195], [NSNumber numberWithInt: 120], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 65], [NSNumber numberWithInt: 80], [NSNumber numberWithInt: 85], [NSNumber numberWithInt: 150], nil]];
+  [[_timeTable enclosingScrollView] setFrame: NSMakeRect (18, 88, 940, 194)];
+  CLButton (view, @"Add Time…", NSMakeRect (12, 12, 170, 32), self, @selector(addTime:));
+  CLButton (view, @"Delete Unbilled Entry", NSMakeRect (186, 12, 210, 32), self, @selector(deleteTime:));
   CLButton (view, @"Review Imported Time", NSMakeRect (406, 12, 220, 32), self, @selector(reviewImportedTime:));
 
+  _timesheetTotal = CLLabel (view, @"", NSMakeRect (18, 57, 940, 25), 12);
+  CLButton (view, @"Create Invoice…", NSMakeRect (640, 12, 190, 32), self, @selector(invoiceTimesheet:));
+
   view = [self tab: @"Invoices" in: tabs];
-  CLLabel (view, @"Invoice your time", NSMakeRect (18, 500, 500, 28), 20);
-  CLLabel (view, @"Create an invoice from all unbilled entries for a client. Issued amounts and details are locked.", NSMakeRect (18, 472, 940, 22), 12);
+  CLLabel (view, @"Billing", NSMakeRect (18, 500, 500, 28), 20);
+  CLLabel (view, @"Enter total hours to bill at the client’s hourly rate. Timesheets are optional. Select an invoice below to manage it.", NSMakeRect (18, 472, 940, 22), 12);
   _invoiceClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 427, 240, 28) pullsDown: NO] autorelease];
   [view addSubview: _invoiceClient];
+  [_invoiceClient setTarget: self];
+  [_invoiceClient setAction: @selector(invoiceClientChanged:)];
   CLLabel (view, @"Tax %", NSMakeRect (272, 430, 50, 22), 12);
   _taxField = CLField (view, @"0", NSMakeRect (327, 429, 65, 26));
   CLLabel (view, @"Due date", NSMakeRect (408, 430, 65, 22), 12);
-  {
-    NSDateFormatter *formatter = [[[NSDateFormatter alloc] init] autorelease];
-    [formatter setDateFormat: @"yyyy-MM-dd"];
-    _dueField = CLField (view, [formatter stringFromDate: [NSDate dateWithTimeIntervalSinceNow: 30 * 86400]], NSMakeRect (481, 429, 130, 26));
-  }
+  _dueField = CLField (view, @"", NSMakeRect (481, 429, 130, 26));
   CLButton (view, @"Create Invoice", NSMakeRect (629, 424, 170, 34), self, @selector(createInvoice:));
+  CLLabel (view, @"Hours", NSMakeRect (18, 389, 55, 24), 12);
+  _invoiceHours = CLField (view, @"", NSMakeRect (78, 389, 130, 26));
+  _invoiceRate = CLLabel (view, @"", NSMakeRect (225, 389, 650, 24), 12);
   _invoicesTable = [self tableIn: view
     columns: [NSArray arrayWithObjects: @"id", @"client", @"date", @"dueDate", @"total", @"status", nil]
     widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 145], [NSNumber numberWithInt: 275], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 110], nil]];
-  [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 354)];
+  [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 315)];
   [_invoicesTable setDoubleAction: @selector(previewInvoice:)];
   [_invoicesTable setTarget: self];
   CLButton (view, @"Preview", NSMakeRect (12, 12, 120, 32), self, @selector(previewInvoice:));
   CLButton (view, @"Print…", NSMakeRect (138, 12, 120, 32), self, @selector(printInvoice:));
-  CLButton (view, @"Toggle Paid / Unpaid", NSMakeRect (264, 12, 215, 32), self, @selector(togglePaid:));
+  CLButton (view, @"Mark Paid / Unpaid", NSMakeRect (264, 12, 215, 32), self, @selector(togglePaid:));
+
+  CLButton (view, @"Email Invoice…", NSMakeRect (489, 12, 180, 32), self, @selector(emailInvoice:));
+
+  CLButton (view, @"Delete Invoice…", NSMakeRect (679, 12, 180, 32), self, @selector(deleteInvoice:));
 
   view = [self tab: @"Business" in: tabs];
   CLLabel (view, @"Business & payment details", NSMakeRect (18, 496, 800, 28), 20);
@@ -217,7 +268,7 @@ CLLedgerPath (void)
   labels = [NSArray arrayWithObjects: @"Business name", @"Email", @"Postal address", @"Currency code", @"Payment instructions", nil];
   for (i = 0; i < [keys count]; i++)
     {
-      CGFloat y = 404 - i * 70;
+      CGFloat y = 412 - i * 56;
       NSTextField *field;
       CLLabel (view, [labels objectAtIndex: i], NSMakeRect (20, y + 2, 165, 24), 13);
       field = CLField (view, [[_ledger business] objectForKey: [keys objectAtIndex: i]], NSMakeRect (190, y, 730, 48));
@@ -225,6 +276,24 @@ CLLedgerPath (void)
         [[field cell] setWraps: YES];
       [_businessFields setObject: field forKey: [keys objectAtIndex: i]];
     }
+  CLLabel (view, @"Starting invoice number", NSMakeRect (20, 151, 170, 24), 13);
+  {
+    NSString *start = [[_ledger business] objectForKey: @"startingInvoiceNumber"];
+    NSTextField *field = CLField (view, start != nil ? start : @"", NSMakeRect (190, 150, 150, 26));
+    [[field cell] setPlaceholderString: @"1"];
+    [field setEnabled: ![_ledger hasIssuedInvoices]];
+    [_businessFields setObject: field forKey: @"startingInvoiceNumber"];
+  }
+  CLLabel (view, @"Defaults to 1; fixed after the first invoice or import.", NSMakeRect (350, 151, 560, 24), 12);
+  _businessLogoData = [[[_ledger business] objectForKey: @"logoData"] copy];
+  _businessLogoPreview = [[[NSImageView alloc] initWithFrame: NSMakeRect (190, 83, 100, 60)] autorelease];
+  [_businessLogoPreview setImageScaling: NSImageScaleProportionallyUpOrDown];
+  if (_businessLogoData != nil)
+    [_businessLogoPreview setImage: [[[NSImage alloc] initWithData: _businessLogoData] autorelease]];
+  [view addSubview: _businessLogoPreview];
+  CLLabel (view, @"Business icon or logo", NSMakeRect (20, 102, 170, 24), 13);
+  CLButton (view, @"Choose Image…", NSMakeRect (310, 98, 160, 32), self, @selector(chooseBusinessLogo:));
+  CLButton (view, @"Remove Logo", NSMakeRect (480, 98, 140, 32), self, @selector(removeBusinessLogo:));
   CLButton (view, @"Save Business Details", NSMakeRect (184, 42, 220, 34), self, @selector(saveBusiness:));
   CLButton (view, @"Back Up Ledger…", NSMakeRect (410, 42, 190, 34), self, @selector(backupLedger:));
   CLButton (view, @"Import QuickBooks…", NSMakeRect (606, 42, 210, 34), self, @selector(importQuickBooks:));
@@ -272,7 +341,7 @@ CLLedgerPath (void)
     {
       NSString *key = [columns objectAtIndex: i];
       NSTableColumn *column = [[[NSTableColumn alloc] initWithIdentifier: key] autorelease];
-      NSString *title = [key isEqual: @"dueDate"] ? @"Due date" : [key capitalizedString];
+      NSString *title = [key isEqual: @"netDays"] ? @"Net days" : [key isEqual: @"dueDate"] ? @"Due date" : ([key isEqual: @"taskName"] ? @"Task" : ([key isEqual: @"date"] ? @"Date / period" : [key capitalizedString]));
       [[column headerCell] setStringValue: title];
       [column setWidth: [[widths objectAtIndex: i] doubleValue]];
       [column setEditable: NO];
@@ -287,6 +356,8 @@ CLLedgerPath (void)
 /** Return the size of the collection represented by a table. */
 - (NSInteger) numberOfRowsInTableView: (NSTableView *)table
 {
+  if (table == _tasksTable)
+    return [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] count];
   if (table == _clientsTable)
     return [[_ledger clients] count];
   if (table == _timeTable)
@@ -299,15 +370,31 @@ CLLedgerPath (void)
 {
   NSString *key = [column identifier];
   NSDictionary *record;
-  if (table == _clientsTable)
+  if (table == _tasksTable)
+    {
+      record = [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] objectAtIndex: row];
+      if ([key isEqual: @"rate"])
+        return [CLLedger money: [record objectForKey: @"rate"]];
+      if ([key isEqual: @"status"])
+        return [[record objectForKey: @"archived"] boolValue] ? @"Archived" : @"Active";
+    }
+  else if (table == _clientsTable)
     {
       record = [[_ledger clients] objectAtIndex: row];
+      if ([key isEqual: @"netDays"])
+        return [NSNumber numberWithInteger: [CLLedger netDaysForClient: record]];
       if ([key isEqual: @"rate"])
         return [CLLedger money: [record objectForKey: key]];
     }
   else if (table == _timeTable)
     {
       record = [[_ledger entries] objectAtIndex: row];
+      if ([key isEqual: @"date"])
+        return [CLLedger dateLabelForEntry: record];
+      if ([key isEqual: @"taskName"])
+        return [record objectForKey: @"taskName"] != nil ? [record objectForKey: @"taskName"] : @"Client default";
+      if ([key isEqual: @"rate"])
+        return [CLLedger money: [record objectForKey: @"rate"]];
       if ([key isEqual: @"client"])
         return [[_ledger clientWithID: [record objectForKey: @"clientID"]] objectForKey: @"name"];
       if ([key isEqual: @"hours"])
@@ -346,6 +433,8 @@ CLLedgerPath (void)
 {
   NSInteger row = [table selectedRow];
   NSArray *records = table == _clientsTable ? [_ledger clients] : (table == _timeTable ? [_ledger entries] : [_ledger invoices]);
+  if (table == _tasksTable)
+    records = [_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES];
   if (row < 0 || (NSUInteger)row >= [records count])
     return nil;
   return [records objectAtIndex: row];
@@ -379,6 +468,13 @@ CLLedgerPath (void)
   long long unbilled = 0;
   long long outstanding = 0;
   long long paid = 0;
+  NSTextField *startField = [_businessFields objectForKey: @"startingInvoiceNumber"];
+  [startField setEnabled: ![_ledger hasIssuedInvoices]];
+  if ([_ledger hasIssuedInvoices])
+    {
+      NSString *start = [[_ledger business] objectForKey: @"startingInvoiceNumber"];
+      [startField setStringValue: start != nil ? start : @"1"];
+    }
   for (i = 0; i < [[_ledger entries] count]; i++)
     {
       NSDictionary *entry = [[_ledger entries] objectAtIndex: i];
@@ -406,6 +502,11 @@ CLLedgerPath (void)
   [_invoicesTable reloadData];
   [self fillClients: _timeClient];
   [self fillClients: _invoiceClient];
+  [self fillClients: _tasksClient];
+  [_tasksTable reloadData];
+  [self timeClientChanged: nil];
+  [self invoiceClientChanged: nil];
+  [self periodChanged: nil];
   [self tick: nil];
 }
 
@@ -459,23 +560,24 @@ CLLedgerPath (void)
 - (void) editClientRecord: (NSDictionary *)client
 {
   NSArray *values = client != nil ? [NSArray arrayWithObjects: [client objectForKey: @"name"],
-    [client objectForKey: @"email"], [client objectForKey: @"address"], [CLLedger money: [client objectForKey: @"rate"]], nil]
-    : [NSArray arrayWithObjects: @"", @"", @"", @"100.00", nil];
-  NSArray *labels = [NSArray arrayWithObjects: @"Name", @"Email", @"Address", @"Hourly rate", nil];
+    [client objectForKey: @"email"], [client objectForKey: @"address"], [CLLedger money: [client objectForKey: @"rate"]],
+    [NSString stringWithFormat: @"%ld", (long)[CLLedger netDaysForClient: client]], nil]
+    : [NSArray arrayWithObjects: @"", @"", @"", @"100.00", @"30", nil];
+  NSArray *labels = [NSArray arrayWithObjects: @"Name", @"Email", @"Address", @"Hourly rate", @"Net payment days", nil];
   NSDictionary *form;
   while ((form = [self editForm: client != nil ? @"Edit Client" : @"Add Client" labels: labels values: values]) != nil)
     {
       NSString *error = nil;
       if ([_ledger saveClient: [client objectForKey: @"id"] name: [form objectForKey: @"Name"]
         email: [form objectForKey: @"Email"] address: [form objectForKey: @"Address"]
-        rate: [form objectForKey: @"Hourly rate"] error: &error])
+        rate: [form objectForKey: @"Hourly rate"] netDays: [form objectForKey: @"Net payment days"] error: &error])
         {
           [self refresh];
           break;
         }
       [self showError: error];
       values = [NSArray arrayWithObjects: [form objectForKey: @"Name"], [form objectForKey: @"Email"],
-        [form objectForKey: @"Address"], [form objectForKey: @"Hourly rate"], nil];
+        [form objectForKey: @"Address"], [form objectForKey: @"Hourly rate"], [form objectForKey: @"Net payment days"], nil];
     }
 }
 
@@ -511,27 +613,43 @@ CLLedgerPath (void)
 
 - (void) addTime: (id)sender
 {
-  NSArray *labels = [NSArray arrayWithObjects: @"Date (YYYY-MM-DD)", @"Description", @"Hours", nil];
-  NSArray *values = [NSArray arrayWithObjects: [CLLedger today], [_taskField stringValue], @"1.00", nil];
+  NSString *error = nil;
+  NSString *kind = [[_periodChoice titleOfSelectedItem] lowercaseString];
+  NSDictionary *period = [CLLedger periodContainingDate: [_periodDate stringValue] kind: kind error: &error];
+  NSArray *labels = [NSArray arrayWithObjects: @"Description", @"Total hours", nil];
+  NSArray *values = [NSArray arrayWithObjects: [_taskField stringValue], @"1.00", nil];
   NSDictionary *form;
   NSString *clientID = [self selectedClient: _timeClient];
+  NSString *title;
   if (clientID == nil)
     {
       [self showError: @"Add a client first, then select it in the Time tab."];
       return;
     }
-  while ((form = [self editForm: @"Add Time for Selected Client" labels: labels values: values]) != nil)
+  if (period == nil)
     {
-      NSString *error = nil;
-      if ([_ledger addTimeForClient: clientID date: [form objectForKey: @"Date (YYYY-MM-DD)"]
-        description: [form objectForKey: @"Description"] hours: [form objectForKey: @"Hours"] error: &error])
+      [self showError: error];
+      return;
+    }
+  [self periodChanged: nil];
+  if ([_entryMode indexOfSelectedItem] == 1)
+    {
+      [self enterTimesheet: period];
+      return;
+    }
+  title = [NSString stringWithFormat: @"%@ total: %@ to %@", [kind capitalizedString],
+    [period objectForKey: @"start"], [period objectForKey: @"end"]];
+  while ((form = [self editForm: title labels: labels values: values]) != nil)
+    {
+      if ([_ledger addTimeForClient: clientID task: [[_timeTask selectedItem] representedObject]
+        date: [period objectForKey: @"start"] period: kind
+        description: [form objectForKey: @"Description"] hours: [form objectForKey: @"Total hours"] error: &error])
         {
           [self refresh];
           break;
         }
       [self showError: error];
-      values = [NSArray arrayWithObjects: [form objectForKey: @"Date (YYYY-MM-DD)"],
-        [form objectForKey: @"Description"], [form objectForKey: @"Hours"], nil];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Description"], [form objectForKey: @"Total hours"], nil];
     }
 }
 
@@ -554,7 +672,7 @@ CLLedgerPath (void)
 - (void) startTimer: (id)sender
 {
   NSString *error = nil;
-  [_ledger startTimerForClient: [self selectedClient: _timeClient] description: [_taskField stringValue] error: &error];
+  [_ledger startTimerForClient: [self selectedClient: _timeClient] task: [[_timeTask selectedItem] representedObject] description: [_taskField stringValue] error: &error];
   [self showError: error];
   [self refresh];
 }
@@ -574,26 +692,88 @@ CLLedgerPath (void)
     [_timerLabel setStringValue: @"No timer running. Choose a client and describe your work, or add manual time below."];
   else
     {
-      long long seconds = MAX (0, (long long)-[[timer objectForKey: @"started"] timeIntervalSinceNow]);
+      long long seconds = MAX (0, (long long)[_ledger timerElapsed]);
       [_timerLabel setStringValue: [NSString stringWithFormat: @"●  %02lld:%02lld:%02lld   %@ — %@  (continues while app is closed)",
         seconds / 3600, (seconds / 60) % 60, seconds % 60,
-        [[_ledger clientWithID: [timer objectForKey: @"clientID"]] objectForKey: @"name"], [timer objectForKey: @"description"]]];
+        [[_ledger clientWithID: [timer objectForKey: @"clientID"]] objectForKey: @"name"], [CLLedger workLabelForEntry: timer]]];
     }
 }
 
 - (void) createInvoice: (id)sender
 {
   NSString *error = nil;
-  if (NSRunAlertPanel (@"Issue invoice?", @"All unbilled time for the selected client will be locked into a new invoice. Check your business details, tax and due date first.", @"Cancel", @"Create Invoice", nil) != NSAlertAlternateReturn)
+  if (NSRunAlertPanel (@"Issue invoice?", @"Create an invoice for the entered hours at this client’s current hourly rate? Check your business details, tax and due date first.", @"Cancel", @"Create Invoice", nil) != NSAlertAlternateReturn)
     return;
-  if ([_ledger invoiceClient: [self selectedClient: _invoiceClient] tax: [_taxField stringValue] dueDate: [_dueField stringValue] error: &error])
+  if ([_ledger invoiceClient: [self selectedClient: _invoiceClient] hours: [_invoiceHours stringValue] tax: [_taxField stringValue] dueDate: [_dueField stringValue] error: &error])
     {
       [self refresh];
+      [_invoiceHours setStringValue: @""];
       [_invoicesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: [[_ledger invoices] count] - 1] byExtendingSelection: NO];
       [self previewInvoice: nil];
     }
   else
     [self showError: error];
+}
+
+- (void) invoiceClientChanged: (id)sender
+{
+  NSDictionary *client = [_ledger clientWithID: [self selectedClient: _invoiceClient]];
+  [_dueField setStringValue: client == nil ? @"" : [_ledger dueDateForClient: [client objectForKey: @"id"] invoiceDate: [CLLedger today]]];
+  [_invoiceRate setStringValue: client == nil ? @"Add a client to start billing." :
+    [NSString stringWithFormat: @"%@ %@ / hour", [[_ledger business] objectForKey: @"currency"],
+      [CLLedger money: [client objectForKey: @"rate"]]]];
+}
+
+- (void) invoiceTimesheet: (id)sender
+{
+  NSArray *labels = [NSArray arrayWithObjects: @"Tax %", @"Due date", nil];
+  NSArray *values = [NSArray arrayWithObjects: [_taxField stringValue],
+    [_ledger dueDateForClient: [self selectedClient: _timeClient] invoiceDate: [CLLedger today]], nil];
+  NSDictionary *form;
+  NSString *error = nil;
+  if ([self selectedClient: _timeClient] == nil)
+    { [self showError: @"Select a timesheet client first."]; return; }
+  while ((form = [self editForm: @"Invoice all unbilled hours at their recorded rates" labels: labels values: values]) != nil)
+    {
+      if ([_ledger invoiceClient: [self selectedClient: _timeClient] tax: [form objectForKey: @"Tax %"]
+        dueDate: [form objectForKey: @"Due date"] error: &error])
+        {
+          [self refresh];
+          [_invoicesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: [[_ledger invoices] count] - 1] byExtendingSelection: NO];
+          [self previewInvoice: nil];
+          return;
+        }
+      [self showError: error];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Tax %"], [form objectForKey: @"Due date"], nil];
+    }
+}
+
+- (void) emailInvoice: (id)sender
+{
+  NSDictionary *invoice = [self selectedRecord: _invoicesTable];
+  NSDictionary *client;
+  NSString *email;
+  NSString *subject;
+  NSString *url;
+  NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
+    @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
+  CLInvoiceView *view;
+  if (invoice == nil)
+    { [self showError: @"Select an invoice first."]; return; }
+  client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]];
+  email = [(client != nil ? client : [invoice objectForKey: @"client"]) objectForKey: @"email"];
+  if ([email length] == 0 || [email rangeOfString: @"@"].location == NSNotFound
+      || [email rangeOfCharacterFromSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound)
+    { [self showError: @"Add a valid email address in Clients, then email this invoice again."]; return; }
+  view = [[[CLInvoiceView alloc] initWithInvoice: invoice] autorelease];
+  subject = [NSString stringWithFormat: @"Invoice %@ — %@", [CLLedger invoiceNumber: invoice],
+    [[invoice objectForKey: @"business"] objectForKey: @"name"]];
+  url = [NSString stringWithFormat: @"mailto:%@?subject=%@&body=%@",
+    [email stringByAddingPercentEncodingWithAllowedCharacters: allowed],
+    [subject stringByAddingPercentEncodingWithAllowedCharacters: allowed],
+    [[view emailText] stringByAddingPercentEncodingWithAllowedCharacters: allowed]];
+  if (![[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString: url]])
+    [self showError: @"Could not open an email draft. Configure a default email application and try again."];
 }
 
 - (void) previewInvoice: (id)sender
@@ -638,6 +818,24 @@ CLLedgerPath (void)
   [view printInvoice: sender];
 }
 
+- (void) deleteInvoice: (id)sender
+{
+  NSDictionary *invoice = [self selectedRecord: _invoicesTable];
+  NSString *error = nil;
+  NSString *warning;
+  if (invoice == nil)
+    { [self showError: @"Select an invoice first."]; return; }
+  warning = [NSString stringWithFormat:
+    @"Permanently delete invoice %@ for %@?\n\nThis cannot be undone. The invoice and its payment status will be removed from this ledger and its totals. Any time entries billed by this invoice will become unbilled and available to invoice again. Its number will not be reused.\n\nCopies already printed or emailed, and records in QuickBooks, will not be changed. Deleting a paid invoice does not refund a payment.",
+    [CLLedger invoiceNumber: invoice], [[invoice objectForKey: @"client"] objectForKey: @"name"]];
+  if (NSRunAlertPanel (@"Delete invoice permanently?", @"%@", @"Cancel", @"Delete Invoice", nil, warning) != NSAlertAlternateReturn)
+    return;
+  if ([_ledger deleteInvoice: [invoice objectForKey: @"id"] error: &error])
+    [_invoicesTable deselectAll: nil];
+  [self showError: error];
+  [self refresh];
+}
+
 - (void) togglePaid: (id)sender
 {
   NSString *error = nil;
@@ -657,6 +855,32 @@ CLLedgerPath (void)
   [self refresh];
 }
 
+- (void) chooseBusinessLogo: (id)sender
+{
+  NSOpenPanel *panel = [NSOpenPanel openPanel];
+  NSData *data;
+  NSImage *image;
+  [panel setAllowsMultipleSelection: NO];
+  [panel setCanChooseDirectories: NO];
+  [panel setAllowedFileTypes: [NSArray arrayWithObjects: @"png", @"jpg", @"jpeg", @"tiff", @"tif", @"icns", nil]];
+  if ([panel runModal] != NSOKButton) return;
+  data = [NSData dataWithContentsOfURL: [panel URL]];
+  image = [[[NSImage alloc] initWithData: data] autorelease];
+  if (data == nil || [data length] > 5 * 1024 * 1024 || ![image isValid]
+      || [image size].width <= 0 || [image size].height <= 0)
+    { [self showError: @"Choose a valid PNG, JPEG, TIFF or icon image no larger than 5 MB."]; return; }
+  [_businessLogoData release];
+  _businessLogoData = [data copy];
+  [_businessLogoPreview setImage: image];
+}
+
+- (void) removeBusinessLogo: (id)sender
+{
+  [_businessLogoData release];
+  _businessLogoData = nil;
+  [_businessLogoPreview setImage: nil];
+}
+
 - (void) saveBusiness: (id)sender
 {
   NSMutableDictionary *business = [NSMutableDictionary dictionary];
@@ -665,6 +889,8 @@ CLLedgerPath (void)
   NSString *error = nil;
   for (i = 0; i < [keys count]; i++)
     [business setObject: [[_businessFields objectForKey: [keys objectAtIndex: i]] stringValue] forKey: [keys objectAtIndex: i]];
+  if (_businessLogoData != nil)
+    [business setObject: _businessLogoData forKey: @"logoData"];
   if ([_ledger saveBusiness: business error: &error])
     NSRunAlertPanel (@"Business details saved", @"New invoices will use these details.", @"OK", nil, nil);
   [self showError: error];
@@ -786,5 +1012,185 @@ CLLedgerPath (void)
       [self showError: error];
       [self refresh];
     }
+}
+
+- (void) fillTimeTasks
+{
+  NSString *previous = [[[_timeTask selectedItem] representedObject] retain];
+  NSString *clientID = [self selectedClient: _timeClient];
+  NSDictionary *client = [_ledger clientWithID: clientID];
+  NSArray *tasks = [_ledger tasksForClient: clientID includeArchived: NO];
+  NSUInteger i;
+  [_timeTask removeAllItems];
+  [_timeTask addItemWithTitle: [NSString stringWithFormat: @"Client default — %@ %@/hr",
+    [[_ledger business] objectForKey: @"currency"], [CLLedger money: [client objectForKey: @"rate"]]]];
+  for (i = 0; i < [tasks count]; i++)
+    {
+      NSDictionary *task = [tasks objectAtIndex: i];
+      NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle:
+        [NSString stringWithFormat: @"%@ — %@ %@/hr", [task objectForKey: @"name"],
+          [[_ledger business] objectForKey: @"currency"], [CLLedger money: [task objectForKey: @"rate"]]]
+        action: NULL keyEquivalent: @""] autorelease];
+      [item setRepresentedObject: [task objectForKey: @"id"]];
+      [[_timeTask menu] addItem: item];
+      if ([[task objectForKey: @"id"] isEqual: previous])
+        [_timeTask selectItem: item];
+    }
+  [previous release];
+}
+
+- (void) timeClientChanged: (id)sender
+{
+  unsigned int i;
+  double total = 0, unbilled = 0;
+  [self fillTimeTasks];
+  for (i = 0; i < [[_ledger entries] count]; i++)
+    {
+      NSDictionary *entry = [[_ledger entries] objectAtIndex: i];
+      if ([[entry objectForKey: @"clientID"] isEqual: [self selectedClient: _timeClient]])
+        {
+          total += [[entry objectForKey: @"seconds"] doubleValue] / 3600.0;
+          if ([CLLedger isUnbilledEntry: entry])
+            unbilled += [[entry objectForKey: @"seconds"] doubleValue] / 3600.0;
+        }
+    }
+  [_timesheetTotal setStringValue: [NSString stringWithFormat:
+    @"Selected client: %.4f total hours • %.4f hours ready to invoice (running timer excluded)", total, unbilled]];
+}
+
+- (void) tasksClientChanged: (id)sender
+{
+  [_tasksTable deselectAll: nil];
+  [_tasksTable reloadData];
+}
+
+- (void) periodChanged: (id)sender
+{
+  NSString *error = nil;
+  NSDictionary *period = [CLLedger periodContainingDate: [_periodDate stringValue]
+    kind: [[_periodChoice titleOfSelectedItem] lowercaseString] error: &error];
+  [_periodLabel setStringValue: period == nil ? error : [NSString stringWithFormat:
+    @"%@ to %@ · %lu day(s) · Weeks run Monday–Sunday. Use Add Time below.",
+    [period objectForKey: @"start"], [period objectForKey: @"end"],
+    (unsigned long)[[period objectForKey: @"dates"] count]]];
+}
+
+- (void) editTaskRecord: (NSDictionary *)task
+{
+  NSString *clientID = [self selectedClient: _tasksClient];
+  NSArray *labels = [NSArray arrayWithObjects: @"Task name", @"Hourly rate", nil];
+  NSArray *values;
+  NSDictionary *form;
+  if (clientID == nil)
+    {
+      [self showError: @"Add a client, then select it in Client Tasks."];
+      return;
+    }
+  values = [NSArray arrayWithObjects: task != nil ? [task objectForKey: @"name"] : @"",
+    [CLLedger money: [(task != nil ? task : [_ledger clientWithID: clientID]) objectForKey: @"rate"]], nil];
+  while ((form = [self editForm: task != nil ? @"Edit Client Task" : @"Add Client Task" labels: labels values: values]) != nil)
+    {
+      NSString *error = nil;
+      if ([_ledger saveTask: [task objectForKey: @"id"] client: clientID
+        name: [form objectForKey: @"Task name"] rate: [form objectForKey: @"Hourly rate"] error: &error])
+        {
+          [self refresh];
+          break;
+        }
+      [self showError: error];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Task name"], [form objectForKey: @"Hourly rate"], nil];
+    }
+}
+
+- (void) addTask: (id)sender
+{
+  [self editTaskRecord: nil];
+}
+
+- (void) editTask: (id)sender
+{
+  NSDictionary *task = [self selectedRecord: _tasksTable];
+  if (task == nil)
+    [self showError: @"Select a task to edit."];
+  else
+    [self editTaskRecord: [[task copy] autorelease]];
+}
+
+- (void) archiveTask: (id)sender
+{
+  NSString *error = nil;
+  [_ledger toggleTaskArchived: [[self selectedRecord: _tasksTable] objectForKey: @"id"] error: &error];
+  [self showError: error];
+  [self refresh];
+}
+
+- (void) enterTimesheet: (NSDictionary *)period
+{
+  NSArray *dates = [period objectForKey: @"dates"];
+  NSMutableArray *fields = [NSMutableArray array];
+  NSScrollView *scroll;
+  NSView *document;
+  NSTextField *description;
+  CGFloat contentHeight = MAX (360, [dates count] * 36 + 12);
+  NSUInteger i;
+  BOOL saved = NO;
+  _dialog = [[NSPanel alloc] initWithContentRect: NSMakeRect (0, 0, 690, 610)
+    styleMask: NSTitledWindowMask backing: NSBackingStoreBuffered defer: NO];
+  [_dialog setTitle: [NSString stringWithFormat: @"Daily Timesheet — %@ to %@",
+    [period objectForKey: @"start"], [period objectForKey: @"end"]]];
+  [_dialog setReleasedWhenClosed: NO];
+  CLLabel ([_dialog contentView], [NSString stringWithFormat: @"%@ · %@",
+    [[_ledger clientWithID: [self selectedClient: _timeClient]] objectForKey: @"name"],
+    [_timeTask titleOfSelectedItem]], NSMakeRect (18, 565, 654, 25), 13);
+  CLLabel ([_dialog contentView], @"Description for these entries (optional with a task)", NSMakeRect (18, 536, 654, 20), 12);
+  description = CLField ([_dialog contentView], [_taskField stringValue], NSMakeRect (18, 507, 654, 26));
+  CLLabel ([_dialog contentView], @"Adds new entries. Leave days blank or zero to skip; enter decimal hours (1.5 = 1h 30m).",
+    NSMakeRect (18, 478, 654, 22), 11);
+  CLLabel ([_dialog contentView], @"Date", NSMakeRect (34, 448, 350, 22), 12);
+  CLLabel ([_dialog contentView], @"Hours", NSMakeRect (396, 448, 160, 22), 12);
+  scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (18, 65, 654, 380)] autorelease];
+  [scroll setHasVerticalScroller: YES];
+  [scroll setBorderType: NSBezelBorder];
+  document = [[[NSView alloc] initWithFrame: NSMakeRect (0, 0, 630, contentHeight)] autorelease];
+  for (i = 0; i < [dates count]; i++)
+    {
+      CGFloat y = contentHeight - 40 - i * 36;
+      NSTextField *field;
+      CLLabel (document, [dates objectAtIndex: i], NSMakeRect (16, y, 340, 26), 13);
+      field = CLField (document, @"", NSMakeRect (376, y, 170, 26));
+      [fields addObject: field];
+      if (i == 0)
+        [_dialog setInitialFirstResponder: field];
+      else
+        [[fields objectAtIndex: i - 1] setNextKeyView: field];
+    }
+  [scroll setDocumentView: document];
+  [[_dialog contentView] addSubview: scroll];
+  [[scroll contentView] scrollToPoint: NSMakePoint (0, MAX (0, contentHeight - [[scroll contentView] bounds].size.height))];
+  [scroll reflectScrolledClipView: [scroll contentView]];
+  [CLButton ([_dialog contentView], @"Cancel", NSMakeRect (406, 18, 120, 32), self, @selector(cancelDialog:)) setKeyEquivalent: @"\033"];
+  CLButton ([_dialog contentView], @"Save Time", NSMakeRect (536, 18, 136, 32), self, @selector(acceptDialog:));
+  [_dialog center];
+  while (!saved)
+    {
+      NSMutableArray *rows = [NSMutableArray array];
+      NSString *error = nil;
+      _dialogAccepted = NO;
+      [NSApp runModalForWindow: _dialog];
+      if (!_dialogAccepted)
+        break;
+      for (i = 0; i < [dates count]; i++)
+        [rows addObject: [NSDictionary dictionaryWithObjectsAndKeys: [dates objectAtIndex: i], @"date",
+          [[fields objectAtIndex: i] stringValue], @"hours", [description stringValue], @"description", nil]];
+      saved = [_ledger addTimeRows: rows client: [self selectedClient: _timeClient]
+        task: [[_timeTask selectedItem] representedObject] error: &error];
+      if (!saved)
+        [self showError: error];
+    }
+  [_dialog orderOut: nil];
+  [_dialog release];
+  _dialog = nil;
+  if (saved)
+    [self refresh];
 }
 @end

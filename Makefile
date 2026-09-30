@@ -39,3 +39,9 @@ test-import:
 .PHONY: icons
 icons:
 	./Scripts/build-icons.sh
+
+.PHONY: test-time
+test-time:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/TimeEntryTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/TimeEntryTests
+	./build/TimeEntryTests

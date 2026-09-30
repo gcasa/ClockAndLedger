@@ -10,4 +10,7 @@ RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && make -f GNUmakefile && \
     $(gnustep-config --base-libs) && /tmp/LedgerTests && \
     gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
     Tests/ImportTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
-    -o /tmp/ImportTests $(gnustep-config --base-libs) && /tmp/ImportTests
+    -o /tmp/ImportTests $(gnustep-config --base-libs) && /tmp/ImportTests && \
+    gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
+    Tests/TimeEntryTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
+    -o /tmp/TimeEntryTests $(gnustep-config --base-libs) && /tmp/TimeEntryTests
