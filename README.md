@@ -277,3 +277,11 @@ Paid invoices display a large, translucent red diagonal **PAID** stamp on every
 page in previews, printed output and PDF email attachments. Marking an invoice
 unpaid removes the stamp from newly generated output. Unverified imported
 payment states are not stamped.
+
+Every editable date has a calendar button alongside the text box: the timesheet
+period date and the Issued and Due date fields in both invoice creation flows.
+Type `YYYY-MM-DD` directly or choose a day in the calendar. **Today** selects the
+current day, **Choose** applies it, and **Cancel** keeps the existing text.
+Calendar selections update due dates and timesheet period summaries just like
+manual entry. Dates shown on fixed daily timesheet rows remain tied to the
+selected period.

@@ -1,7 +1,7 @@
 # macOS convenience build; GNUstep uses GNUmakefile (make -f GNUmakefile).
 CC = clang
 CFLAGS = -std=gnu89 -fno-objc-arc -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -ISources
-SOURCES = Sources/main.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m Sources/CLAppController.m Sources/CLInvoiceView.m Sources/CLInvoiceMailer.m
+SOURCES = Sources/main.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m Sources/CLAppController.m Sources/CLInvoiceView.m Sources/CLInvoiceMailer.m Sources/CLDateField.m
 APP = build/ClockAndLedger.app
 
 .PHONY: all macos run test docs clean
@@ -56,5 +56,5 @@ test-reminders:
 .PHONY: test-ui
 test-ui:
 	mkdir -p build
-	$(CC) $(CFLAGS) Tests/InvoiceUITests.m Sources/CLAppController.m Sources/CLInvoiceMailer.m Sources/CLInvoiceView.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Cocoa -o build/InvoiceUITests
+	$(CC) $(CFLAGS) Tests/InvoiceUITests.m Sources/CLDateField.m Sources/CLAppController.m Sources/CLInvoiceMailer.m Sources/CLInvoiceView.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Cocoa -o build/InvoiceUITests
 	./build/InvoiceUITests

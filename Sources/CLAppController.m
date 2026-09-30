@@ -2,6 +2,7 @@
 #import "CLLedger.h"
 #import "CLInvoiceView.h"
 #import "CLInvoiceMailer.h"
+#import "CLDateField.h"
 
 static NSTextField *
 CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
@@ -223,7 +224,8 @@ CLLedgerPath (void)
   [_periodChoice setAction: @selector(periodChanged:)];
   [view addSubview: _periodChoice];
   CLLabel (view, @"Date in period (YYYY-MM-DD)", NSMakeRect (160, 376, 210, 18), 11);
-  _periodDate = CLField (view, [CLLedger today], NSMakeRect (160, 349, 195, 26));
+  _periodDate = [CLDateField fieldInView: view value: [CLLedger today] frame: NSMakeRect (160, 349, 195, 26)];
+  [_periodDate setDelegate: (id)self];
   [_periodDate setTarget: self];
   [_periodDate setAction: @selector(periodChanged:)];
   CLLabel (view, @"Entry method", NSMakeRect (370, 376, 240, 18), 11);
@@ -246,18 +248,18 @@ CLLedgerPath (void)
   view = [self tab: @"Invoices" in: tabs];
   CLLabel (view, @"Billing", NSMakeRect (18, 500, 500, 28), 20);
   CLLabel (view, @"Choose a client and task, then enter hours to bill at the task’s current rate.", NSMakeRect (18, 472, 940, 22), 12);
-  _invoiceClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 427, 210, 28) pullsDown: NO] autorelease];
+  _invoiceClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 427, 180, 28) pullsDown: NO] autorelease];
   [view addSubview: _invoiceClient];
   [_invoiceClient setTarget: self];
   [_invoiceClient setAction: @selector(invoiceClientChanged:)];
-  CLLabel (view, @"Tax %", NSMakeRect (240, 430, 45, 22), 12);
-  _taxField = CLField (view, @"0", NSMakeRect (285, 429, 55, 26));
-  CLLabel (view, @"Issued", NSMakeRect (355, 430, 50, 22), 12);
-  _issuedField = CLField (view, [CLLedger today], NSMakeRect (410, 429, 115, 26));
+  CLLabel (view, @"Tax %", NSMakeRect (208, 430, 40, 22), 12);
+  _taxField = CLField (view, @"0", NSMakeRect (248, 429, 45, 26));
+  CLLabel (view, @"Issued", NSMakeRect (303, 430, 45, 22), 12);
+  _issuedField = [CLDateField fieldInView: view value: [CLLedger today] frame: NSMakeRect (350, 429, 155, 26)];
   [_issuedField setDelegate: (id)self];
   [_issuedField setToolTip: @"YYYY-MM-DD. Changing this date recalculates the due date using the client's net payment days."];
-  CLLabel (view, @"Due date", NSMakeRect (540, 430, 65, 22), 12);
-  _dueField = CLField (view, @"", NSMakeRect (610, 429, 115, 26));
+  CLLabel (view, @"Due date", NSMakeRect (518, 430, 55, 22), 12);
+  _dueField = [CLDateField fieldInView: view value: @"" frame: NSMakeRect (575, 429, 155, 26)];
   CLButton (view, @"Create Invoice", NSMakeRect (750, 424, 195, 34), self, @selector(createInvoice:));
   CLLabel (view, @"Hours", NSMakeRect (18, 389, 55, 24), 12);
   _invoiceHours = CLField (view, @"", NSMakeRect (78, 389, 130, 26));
@@ -593,7 +595,10 @@ CLLedgerPath (void)
           [fields setObject: text forKey: label];
           continue;
         }
-      field = CLField ([_dialog contentView], [values objectAtIndex: i], NSMakeRect (180, y, 408, 45));
+      if ([label isEqual: @"Issued"] || [label isEqual: @"Due date"] || [label isEqual: @"Date"])
+        field = [CLDateField fieldInView: [_dialog contentView] value: [values objectAtIndex: i] frame: NSMakeRect (180, y, 408, 45)];
+      else
+        field = CLField ([_dialog contentView], [values objectAtIndex: i], NSMakeRect (180, y, 408, 45));
       if ([label isEqual: @"Issued"] && _dialogInvoiceClientID != nil)
         { _dialogIssuedField = field; [field setDelegate: (id)self]; }
       if ([label isEqual: @"Due date"] && _dialogInvoiceClientID != nil)
@@ -842,7 +847,9 @@ CLLedgerPath (void)
 
 - (void) controlTextDidChange: (NSNotification *)notification
 {
-  if ([notification object] == _issuedField)
+  if ([notification object] == _periodDate)
+    [self periodChanged: nil];
+  else if ([notification object] == _issuedField)
     [_dueField setStringValue: [_ledger dueDateForClient: [self selectedClient: _invoiceClient]
       invoiceDate: [_issuedField stringValue]] ?: @""];
   else if ([notification object] == _dialogIssuedField && _dialogInvoiceClientID != nil)

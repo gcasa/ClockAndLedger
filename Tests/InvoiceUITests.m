@@ -1,6 +1,7 @@
 #import <AppKit/AppKit.h>
 #import "CLAppController.h"
 #import "CLLedger.h"
+#import "CLDateField.h"
 
 static unsigned int checks;
 static void Check (BOOL ok, NSString *label)
@@ -14,6 +15,9 @@ static void Check (BOOL ok, NSString *label)
 @interface CLTestController : CLAppController
 - (id) initWithLedger: (CLLedger *)ledger;
 - (void) verifyTasks;
+- (void) verifyCalendar;
+- (void) inspectCalendar: (NSTimer *)timer;
+- (void) pickDate: (NSString *)date inField: (CLDateField *)field;
 - (void) inspectForm: (NSTimer *)timer;
 - (void) verifyIssuedForm;
 - (void) inspectIssuedForm: (NSTimer *)timer;
@@ -32,12 +36,53 @@ static void Check (BOOL ok, NSString *label)
       [item setRepresentedObject: [[[ledger clients] objectAtIndex: 0] objectForKey: @"id"]];
       [[_invoiceClient menu] addItem: item];
       _invoiceTask = [[[NSPopUpButton alloc] initWithFrame: NSZeroRect pullsDown: NO] autorelease];
-      _issuedField = [[[NSTextField alloc] initWithFrame: NSZeroRect] autorelease];
+      _issuedField = [CLDateField fieldInView: [_window contentView] value: [CLLedger today] frame: NSMakeRect (20, 20, 195, 26)];
       [_issuedField setStringValue: [CLLedger today]];
       _dueField = [[[NSTextField alloc] initWithFrame: NSZeroRect] autorelease];
       _invoiceRate = [[[NSTextField alloc] initWithFrame: NSZeroRect] autorelease];
     }
   return self;
+}
+- (void) pickDate: (NSString *)date inField: (CLDateField *)field
+{
+  NSTimer *timer = [NSTimer timerWithTimeInterval: 0.1 target: self selector: @selector(inspectCalendar:)
+    userInfo: [NSDictionary dictionaryWithObjectsAndKeys: field, @"field", date, @"date", nil] repeats: NO];
+  [[NSRunLoop currentRunLoop] addTimer: timer forMode: NSModalPanelRunLoopMode];
+  [field showCalendar: nil];
+}
+- (void) inspectCalendar: (NSTimer *)timer
+{
+  CLDateField *field = [[timer userInfo] objectForKey: @"field"];
+  NSString *date = [[timer userInfo] objectForKey: @"date"];
+  NSArray *views = [[[NSApp modalWindow] contentView] subviews];
+  NSDatePicker *picker = nil;
+  NSDateFormatter *formatter = [[[NSDateFormatter alloc] init] autorelease];
+  unsigned int i;
+  [formatter setLocale: [[[NSLocale alloc] initWithLocaleIdentifier: @"en_US_POSIX"] autorelease]];
+  [formatter setTimeZone: [NSTimeZone timeZoneForSecondsFromGMT: 0]];
+  [formatter setDateFormat: @"yyyy-MM-dd"];
+  for (i = 0; i < [views count]; i++)
+    if ([[views objectAtIndex: i] isKindOfClass: [NSDatePicker class]]) picker = [views objectAtIndex: i];
+  Check (picker != nil && [picker datePickerStyle] == NSClockAndCalendarDatePickerStyle, @"Calendar opens as graphical date picker");
+  if ([date isEqual: @"cancel"])
+    { [field cancelCalendar: nil]; return; }
+  Check ([[formatter stringFromDate: [picker dateValue]] isEqual: [field stringValue]], @"Picker starts at manually entered date");
+  [picker setDateValue: [formatter dateFromString: date]];
+  [field chooseDate: nil];
+}
+- (void) verifyCalendar
+{
+  [_issuedField setStringValue: @"2024-02-15"];
+  [_issuedField setDelegate: (id)self];
+  [self pickDate: @"2024-02-29" inField: (CLDateField *)_issuedField];
+  Check ([[_issuedField stringValue] isEqual: @"2024-02-29"], @"Calendar selection updates editable text");
+  Check ([[_dueField stringValue] isEqual: @"2024-03-30"], @"Calendar selection recalculates due date");
+  [_issuedField setStringValue: @"2024-02-30"];
+  [self pickDate: @"cancel" inField: (CLDateField *)_issuedField];
+  Check ([[_issuedField stringValue] isEqual: @"2024-02-30"], @"Cancel preserves invalid manual text for correction");
+  [_issuedField setStringValue: @"2026-12-31"];
+  [self controlTextDidChange: [NSNotification notificationWithName: NSControlTextDidChangeNotification object: _issuedField]];
+  Check ([[_dueField stringValue] isEqual: @"2027-01-30"], @"Manual entry still works after using calendar");
 }
 - (void) verifyTasks
 {
@@ -75,7 +120,9 @@ static void Check (BOOL ok, NSString *label)
 }
 - (void) inspectIssuedForm: (NSTimer *)timer
 {
-  Check (_dialogIssuedField != nil && _dialogDueField != nil, @"Timesheet date fields connected");
+  Check ([_dialogIssuedField isKindOfClass: [CLDateField class]] && [_dialogDueField isKindOfClass: [CLDateField class]], @"Timesheet invoice has both calendar fields");
+  [self pickDate: @"2024-02-15" inField: (CLDateField *)_dialogIssuedField];
+  Check ([[_dialogDueField stringValue] isEqual: @"2024-03-16"], @"Nested calendar updates timesheet due date");
   [_dialogIssuedField setStringValue: @"2024-02-15"];
   [self controlTextDidChange: [NSNotification notificationWithName: NSControlTextDidChangeNotification object: _dialogIssuedField]];
   Check ([[_dialogDueField stringValue] isEqual: @"2024-03-16"], @"Timesheet issue date recalculates due date");
@@ -125,6 +172,7 @@ int main (void)
   [ledger saveTask: nil client: other name: @"Other client task" rate: @"1" error: NULL];
   controller = [[CLTestController alloc] initWithLedger: ledger];
   [controller verifyTasks];
+  [controller verifyCalendar];
   [controller verifyIssuedForm];
   {
     NSTimer *timer = [NSTimer timerWithTimeInterval: 0.1 target: controller selector: @selector(inspectForm:) userInfo: nil repeats: NO];
