@@ -6,6 +6,8 @@
 @interface CLAppController : NSObject
 {
   CLLedger *_ledger;
+  NSTableView *_financeTable;
+  NSPopUpButton *_financeMode;
   NSWindow *_window;
   NSTableView *_clientsTable;
   NSTableView *_timeTable;
@@ -35,6 +37,13 @@
   NSMutableDictionary *_businessFields;
   NSData *_businessLogoData;
   NSImageView *_businessLogoPreview;
+#ifdef __APPLE__
+  NSStatusItem *_statusItem;
+  NSMenuItem *_statusSummary;
+  NSMenuItem *_statusStart;
+  NSMenuItem *_statusStop;
+  NSTimer *_statusPulse;
+#endif
   NSTimer *_pulse;
   NSTimer *_reminderPulse;
   CLInvoiceMailer *_mailer;

@@ -50,6 +50,16 @@ CLLedgerPath (void)
 
 @interface CLAppController (Private)
 /** Refresh tables, client choices and financial summary after a mutation. */
+#ifdef __APPLE__
+- (void) setupStatusItem;
+- (void) updateStatusItem: (id)sender;
+- (void) startStatusTimer: (id)sender;
+- (void) showMainWindow: (id)sender;
+#endif
+- (NSArray *) financeRows;
+- (void) financeChanged: (id)sender;
+- (void) financeEditRecord: (NSDictionary *)record;
+- (void) editPaymentForInvoice: (NSDictionary *)invoice payment: (NSDictionary *)payment;
 - (void) refresh;
 /** Show a recoverable operation failure if an error is present. */
 - (void) showError: (NSString *)error;
@@ -77,8 +87,16 @@ CLLedgerPath (void)
 
 @implementation CLAppController
 
+#include "CLStatusBar.inc"
+
 - (void) dealloc
 {
+#ifdef __APPLE__
+  [_statusPulse invalidate];
+  [_statusPulse release];
+  if (_statusItem != nil) [[NSStatusBar systemStatusBar] removeStatusItem: _statusItem];
+  [_statusItem release];
+#endif
   [_pulse invalidate];
   [_pulse release];
   [_reminderPulse invalidate];
@@ -282,11 +300,24 @@ CLLedgerPath (void)
   CLButton (view, @"Edit Invoice…", NSMakeRect (12, 12, 130, 32), self, @selector(editInvoice:));
   CLButton (view, @"Preview", NSMakeRect (148, 12, 90, 32), self, @selector(previewInvoice:));
   CLButton (view, @"Print…", NSMakeRect (244, 12, 90, 32), self, @selector(printInvoice:));
-  CLButton (view, @"Mark Paid / Unpaid", NSMakeRect (340, 12, 180, 32), self, @selector(togglePaid:));
+  CLButton (view, @"Record Payment…", NSMakeRect (340, 12, 180, 32), self, @selector(togglePaid:));
 
   CLButton (view, @"Email Invoice…", NSMakeRect (526, 12, 180, 32), self, @selector(emailInvoice:));
 
   CLButton (view, @"Delete Invoice…", NSMakeRect (712, 12, 180, 32), self, @selector(deleteInvoice:));
+
+  view = [self tab: @"Company Finances" in: tabs];
+  _financeMode = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 475, 260, 30) pullsDown: NO] autorelease];
+  [_financeMode addItemsWithTitles: [NSArray arrayWithObjects: @"Bank accounts", @"Expenses & receipts", @"Invoice payments", nil]];
+  [_financeMode setTarget: self]; [_financeMode setAction: @selector(financeChanged:)]; [view addSubview: _financeMode];
+  CLLabel (view, @"Balance = opening balance + recorded receipts − expenses. No bank synchronization.", NSMakeRect (290, 476, 665, 28), 12);
+  _financeTable = [self tableIn: view columns: [NSArray arrayWithObjects: @"name", @"date", @"vendor", @"category", @"amount", @"account", @"reference", @"receiptName", nil] widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 135], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 160], [NSNumber numberWithInt: 180], nil]];
+  CLButton (view, @"Add…", NSMakeRect (18, 12, 100, 32), self, @selector(financeAdd:));
+  CLButton (view, @"Edit…", NSMakeRect (122, 12, 100, 32), self, @selector(financeEdit:));
+  CLButton (view, @"Delete…", NSMakeRect (226, 12, 100, 32), self, @selector(financeDelete:));
+  CLButton (view, @"Attach Receipt…", NSMakeRect (334, 12, 165, 32), self, @selector(financeReceipt:));
+  CLButton (view, @"Export CSV…", NSMakeRect (718, 12, 135, 32), self, @selector(financeExport:));
+  CLButton (view, @"Export / Open Receipt…", NSMakeRect (505, 12, 205, 32), self, @selector(financeOpenReceipt:));
 
   view = [self tab: @"Business" in: tabs];
   CLLabel (view, @"Business & payment details", NSMakeRect (18, 496, 800, 28), 20);
@@ -342,6 +373,9 @@ CLLedgerPath (void)
             [child setAutoresizingMask: NSViewMinYMargin];
         }
     }
+#ifdef __APPLE__
+  [self setupStatusItem];
+#endif
   [self refresh];
   _pulse = [[NSTimer scheduledTimerWithTimeInterval: 1 target: self selector: @selector(tick:) userInfo: nil repeats: YES] retain];
   _reminderPulse = [[NSTimer scheduledTimerWithTimeInterval: 60 target: self selector: @selector(checkReminders:) userInfo: nil repeats: YES] retain];
@@ -390,6 +424,7 @@ CLLedgerPath (void)
 /** Return the size of the collection represented by a table. */
 - (NSInteger) numberOfRowsInTableView: (NSTableView *)table
 {
+  if (table == _financeTable) return [[self financeRows] count];
   if (table == _tasksTable)
     return [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] count];
   if (table == _clientsTable)
@@ -404,6 +439,20 @@ CLLedgerPath (void)
 {
   NSString *key = [column identifier];
   NSDictionary *record;
+  if (table == _financeTable)
+    {
+      record = [[self financeRows] objectAtIndex: row];
+      if ([_financeMode indexOfSelectedItem] == 0)
+        {
+          if ([key isEqual: @"amount"]) return [NSString stringWithFormat: @"%@ %@", [record objectForKey: @"currency"], [CLLedger money: [_ledger balanceForAccount: [record objectForKey: @"id"]]]];
+          if ([key isEqual: @"vendor"]) return [record objectForKey: @"bank"];
+          if ([key isEqual: @"reference"]) return [record objectForKey: @"notes"];
+          if ([key isEqual: @"account"]) { NSString *number = [record objectForKey: @"number"]; return [number length] ? [@"•••• " stringByAppendingString: [number substringFromIndex: [number length] > 4 ? [number length]-4 : 0]] : @""; }
+        }
+      if ([key isEqual: @"amount"]) return [NSString stringWithFormat: @"%@ %@", [record objectForKey: @"currency"], [CLLedger money: [record objectForKey: @"amount"]]];
+      if ([key isEqual: @"account"]) { NSDictionary *account; for (account in [_ledger accounts]) if ([[account objectForKey: @"id"] isEqual: [record objectForKey: @"accountID"]]) return [account objectForKey: @"name"]; return @"Unassigned"; }
+      return [record objectForKey: key] ?: @"";
+    }
   if (table == _tasksTable)
     {
       record = [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] objectAtIndex: row];
@@ -456,8 +505,9 @@ CLLedgerPath (void)
         {
           if ([[record objectForKey: @"paymentUnverified"] boolValue])
             return @"Review payment";
-          if ([[record objectForKey: @"paid"] boolValue])
-            return @"Paid";
+          if ([[CLLedger receivedForInvoice: record] longLongValue] > [[record objectForKey: @"total"] longLongValue]) return @"Overpaid";
+          if ([[record objectForKey: @"paid"] boolValue]) return @"Paid";
+          if ([[CLLedger receivedForInvoice: record] longLongValue] > 0) return [NSString stringWithFormat: @"Partial (%@ due)", [CLLedger money: [CLLedger balanceForInvoice: record]]];
           return ![[record objectForKey: @"dueDateUnverified"] boolValue]
             && [(NSString *)[record objectForKey: @"dueDate"] compare: [CLLedger today]] == NSOrderedAscending ? @"Overdue" : @"Unpaid";
         }
@@ -528,10 +578,11 @@ CLLedgerPath (void)
         continue;
       {
         NSString *currency = [[invoice objectForKey: @"business"] objectForKey: @"currency"];
-        NSMutableDictionary *totals = [[invoice objectForKey: @"paid"] boolValue] ? paid : outstanding;
-        NSDecimalNumber *amount = [NSDecimalNumber decimalNumberWithDecimal: [[invoice objectForKey: @"total"] decimalValue]];
-        NSDecimalNumber *previous = [totals objectForKey: currency] ?: [NSDecimalNumber zero];
-        [currencies addObject: currency]; [totals setObject: [previous decimalNumberByAdding: amount] forKey: currency];
+        NSDecimalNumber *received = [NSDecimalNumber decimalNumberWithDecimal: [[CLLedger receivedForInvoice: invoice] decimalValue]];
+        NSDecimalNumber *owed = [NSDecimalNumber decimalNumberWithDecimal: [[CLLedger balanceForInvoice: invoice] decimalValue]];
+        [currencies addObject: currency];
+        [paid setObject: [[paid objectForKey: currency] ?: [NSDecimalNumber zero] decimalNumberByAdding: received] forKey: currency];
+        [outstanding setObject: [[outstanding objectForKey: currency] ?: [NSDecimalNumber zero] decimalNumberByAdding: owed] forKey: currency];
       }
     }
   currencyNames = [[currencies allObjects] sortedArrayUsingSelector: @selector(compare:)];
@@ -551,6 +602,7 @@ CLLedgerPath (void)
      [outstandingText componentsJoinedByString: @" / "],
     [paidText componentsJoinedByString: @" / "], (unsigned long)[[_ledger clients] count]]];
   [_summaryLabel setToolTip: [_summaryLabel stringValue]];
+  [self financeChanged: nil];
   [_clientsTable reloadData];
   [_timeTable reloadData];
   [_invoicesTable reloadData];
@@ -588,6 +640,18 @@ CLLedgerPath (void)
       cursor -= rowHeight;
       NSTextField *field;
       CLLabel ([_dialog contentView], [labels objectAtIndex: i], NSMakeRect (18, y + 10, 157, 24), 13);
+      if ([label isEqual: @"Bank account"] || [label isEqual: @"Invoice"])
+        {
+          BOOL choosingInvoice = [label isEqual: @"Invoice"];
+          NSPopUpButton *popup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (180, y, 408, 40) pullsDown: NO] autorelease];
+          NSDictionary *record;
+          [popup addItemWithTitle: choosingInvoice ? @"Select an invoice" : @"Unassigned"]; [[popup lastItem] setRepresentedObject: @""];
+          for (record in choosingInvoice ? [_ledger invoices] : [_ledger accounts])
+            { [popup addItemWithTitle: choosingInvoice ? [NSString stringWithFormat: @"%@ — %@", [CLLedger invoiceNumber: record], [[record objectForKey: @"client"] objectForKey: @"name"]] : [NSString stringWithFormat: @"%@ (%@)", [record objectForKey: @"name"], [record objectForKey: @"currency"]]];
+              [[popup lastItem] setRepresentedObject: [record objectForKey: @"id"]];
+              if ([[record objectForKey: @"id"] isEqual: [values objectAtIndex: i]]) [popup selectItem: [popup lastItem]]; }
+          [[_dialog contentView] addSubview: popup]; [fields setObject: popup forKey: label]; continue;
+        }
       if ([label isEqual: @"Automatic email"])
         {
           NSButton *toggle = [[[NSButton alloc] initWithFrame: NSMakeRect (180, y, 408, 45)] autorelease];
@@ -638,7 +702,7 @@ CLLedgerPath (void)
   for (i = 0; i < [labels count]; i++)
     {
       id field = [fields objectForKey: [labels objectAtIndex: i]];
-      NSString *value = [field isKindOfClass: [NSButton class]] ? ([field state] == NSOnState ? @"yes" : @"no")
+      NSString *value = [field isKindOfClass: [NSPopUpButton class]] ? [[field selectedItem] representedObject] : [field isKindOfClass: [NSButton class]] ? ([field state] == NSOnState ? @"yes" : @"no")
         : ([field isKindOfClass: [NSTextView class]] ? [field string] : [field stringValue]);
       [result setObject: value forKey: [labels objectAtIndex: i]];
     }
@@ -795,6 +859,9 @@ CLLedgerPath (void)
 
 - (void) tick: (id)sender
 {
+#ifdef __APPLE__
+  [self updateStatusItem: nil];
+#endif
   if (_mailer != nil && !_mailStarting && ![_mailer isRunning])
     {
       NSString *error = nil;
@@ -1012,21 +1079,7 @@ CLLedgerPath (void)
 
 - (void) togglePaid: (id)sender
 {
-  NSString *error = nil;
-  NSDictionary *invoice = [self selectedRecord: _invoicesTable];
-  if ([[invoice objectForKey: @"paymentUnverified"] boolValue])
-    {
-      NSInteger answer = NSRunAlertPanel (@"Confirm imported payment status",
-        @"The export did not include a reliable payment status. Check QuickBooks before confirming.",
-        @"Cancel", @"Paid", @"Unpaid");
-      if (answer == NSAlertDefaultReturn)
-        return;
-      [_ledger setInvoice: [invoice objectForKey: @"id"] paid: answer == NSAlertAlternateReturn error: &error];
-    }
-  else
-    [_ledger togglePaid: [invoice objectForKey: @"id"] error: &error];
-  [self showError: error];
-  [self refresh];
+  [self editPaymentForInvoice: [self selectedRecord: _invoicesTable] payment: nil];
 }
 
 - (void) chooseBusinessLogo: (id)sender
@@ -1101,6 +1154,9 @@ CLLedgerPath (void)
 
 - (void) applicationWillTerminate: (NSNotification *)notification
 {
+#ifdef __APPLE__
+  [_statusPulse invalidate];
+#endif
   [_reminderPulse invalidate];
   [_mailer cancel];
   [_pulse invalidate];
@@ -1491,4 +1547,5 @@ CLLedgerPath (void)
   [self showError: [history count] > 0 ? @"Reminder submission is recorded. Apple Mail handles delivery; check its Outbox and any bounce notices." : @"No automatic reminder has been attempted. Configure Email Reminders for this client in Clients."];
 }
 
+#include "CLFinanceUI.inc"
 @end

@@ -217,6 +217,8 @@ CLDaysUntil (NSString *date, NSString *due)
   return (NSInteger)llround ([[formatter dateFromString: due] timeIntervalSinceDate: [formatter dateFromString: date]] / 86400.0);
 }
 
+#include "CLFinanceValidation.inc"
+
 static BOOL
 CLValidLedger (id data)
 {
@@ -348,7 +350,7 @@ CLValidLedger (id data)
       && (!CLFields (timer, @"taskID,taskName", @"")
           || ![[taskClients objectForKey: [timer objectForKey: @"taskID"]] isEqual: [timer objectForKey: @"clientID"]]))
     return NO;
-  return YES;
+  return CLValidFinance (data);
 }
 
 @interface CLLedger (Private)
@@ -453,6 +455,8 @@ CLValidLedger (id data)
 
 - (BOOL) commit: (NSMutableDictionary *)backup error: (NSString **)error
 {
+  if (!CLValidFinance (_data))
+    { [_data release]; _data = [backup retain]; return CLFail (error, @"Financial records are invalid. The change was rolled back."); }
   NSError *failure = nil;
   NSData *bytes = [NSPropertyListSerialization dataWithPropertyList: _data
     format: NSPropertyListXMLFormat_v1_0 options: 0 error: &failure];
@@ -484,7 +488,8 @@ CLValidLedger (id data)
 + (NSString *) money: (NSNumber *)cents
 {
   long long value = [cents longLongValue];
-  return [NSString stringWithFormat: @"%lld.%02lld", value / 100, value % 100];
+  unsigned long long magnitude = value < 0 ? (unsigned long long)(-(value + 1)) + 1 : (unsigned long long)value;
+  return [NSString stringWithFormat: @"%@%llu.%02llu", value < 0 ? @"-" : @"", magnitude / 100, magnitude % 100];
 }
 
 + (NSString *) today
@@ -816,6 +821,7 @@ CLValidLedger (id data)
   unsigned int i;
   if (invoice == nil)
     return CLFail (error, @"Select an invoice first.");
+  if ([[invoice objectForKey: @"payments"] count]) return CLFail (error, @"Remove recorded payments in Company Finances before deleting this invoice.");
   backup = [self backup];
   /* Retain only its number so deletion never permits number reuse. */
   if ([_data objectForKey: @"deletedInvoiceIDs"] == nil)
@@ -847,6 +853,7 @@ CLValidLedger (id data)
   NSMutableDictionary *backup;
   if (invoice == nil)
     return CLFail (error, @"Select an invoice first.");
+  if ([invoice objectForKey: @"payments"] != nil) return CLFail (error, @"Manage recorded payments in Company Finances to change payment status.");
   backup = [self backup];
   [invoice removeObjectForKey: @"paymentUnverified"];
   [invoice setObject: [NSNumber numberWithBool: paid] forKey: @"paid"];
@@ -1399,7 +1406,7 @@ CLValidLedger (id data)
     [[self billingClientForInvoice: invoice] objectForKey: @"name"], @"{client}", [CLLedger invoiceNumber: invoice], @"{invoice}",
     [invoice objectForKey: @"dueDate"], @"{dueDate}",
     [NSString stringWithFormat: @"%@ %@", [[invoice objectForKey: @"business"] objectForKey: @"currency"],
-      [CLLedger money: [invoice objectForKey: @"total"]]], @"{total}", nil];
+      [CLLedger money: [CLLedger balanceForInvoice: invoice]]], @"{total}", nil];
   keys = [values keyEnumerator];
   while ((key = [keys nextObject]) != nil)
     message = [message stringByReplacingOccurrencesOfString: key withString: [values objectForKey: key]];
@@ -1691,7 +1698,15 @@ CLValidLedger (id data)
   [updated setObject: [NSNumber numberWithLongLong: subtotal] forKey: @"subtotal"];
   [updated setObject: [NSNumber numberWithLongLong: subtotal + [tax longLongValue]] forKey: @"total"];
   [updated setObject: lines forKey: @"lines"];
+  if ([invoice objectForKey: @"payments"] != nil)
+    {
+      NSString *oldStatus = [[invoice objectForKey: @"paid"] boolValue] ? @"Paid" : @"Unpaid";
+      if (![[values objectForKey: @"status"] isEqual: oldStatus] || ![[business objectForKey: @"currency"] isEqual: [[invoice objectForKey: @"business"] objectForKey: @"currency"]])
+        return CLFail (error, @"Manage payment status in Company Finances. An invoice with recorded payments must keep its currency.");
+    }
   [updated setObject: [NSNumber numberWithBool: [[values objectForKey: @"status"] isEqual: @"Paid"]] forKey: @"paid"];
+  if ([invoice objectForKey: @"payments"] != nil)
+    [updated setObject: [NSNumber numberWithBool: [[CLLedger receivedForInvoice: updated] longLongValue] >= [[updated objectForKey: @"total"] longLongValue]] forKey: @"paid"];
   if ([[values objectForKey: @"status"] isEqual: @"Unverified"]) [updated setObject: [NSNumber numberWithBool: YES] forKey: @"paymentUnverified"];
   else [updated removeObjectForKey: @"paymentUnverified"];
   if (![[values objectForKey: @"dueDate"] isEqual: [invoice objectForKey: @"dueDate"]])
@@ -1710,4 +1725,5 @@ CLValidLedger (id data)
   return [self commit: backup error: error];
 }
 
+#include "CLFinanceLedger.inc"
 @end

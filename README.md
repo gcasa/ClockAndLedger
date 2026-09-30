@@ -243,8 +243,20 @@ late, only the overdue reminder is sent. Both include the complete invoice PDF.
 Paid, zero-total, and unverified imported invoices are excluded. New settings
 apply to existing eligible unpaid invoices as well as future invoices.
 
-Closing the main window leaves the app running in the background. Click its
-Dock icon to reopen it. **Quit** stops checks, and nothing is sent while the Mac
+Closing the main window leaves the app running in the background. On macOS,
+click the **◷ menu bar icon** and choose **Start Timer → client → task** to begin
+tracking without opening the main window. **Client default** prompts for a work
+description and uses the client's rate. The menu bar displays elapsed time while
+running; its menu identifies the active client and work. **Stop Timer & Save Time**
+records the elapsed time in Timesheets. Only one timer can run at a time, shared
+with the main window, and archived tasks are excluded from the menu.
+
+Choose **Open Clock & Ledger** from the menu, or click its Dock icon, to reopen
+the window. A running timer persists across app restarts and includes elapsed
+sleep/closed-app time until explicitly stopped. Run `make -f Makefile test-status`
+for the menu bar regression checks.
+
+**Quit** stops checks, and nothing is sent while the Mac
 is asleep or the app is not running; the next check catches up when it resumes.
 The app does not install a login item. Apple Mail may queue messages while
 offline: “submitted” means Mail accepted the message, not that the recipient
@@ -311,3 +323,36 @@ Edited client contact details are used for future invoice emails and reminder
 messages. Sent reminder history is retained to avoid duplicate automatic emails.
 A pending email must finish or be reviewed before the invoice can be edited.
 Previously sent emails and PDFs are unchanged; generate a new copy after editing.
+
+### Company finances
+
+Use **Company Finances → Bank accounts → Add** to record the bank, account number,
+routing/IBAN details, currency, and opening balance. The opening balance is the
+balance **before the transactions you record here**; entering today's balance and
+also recording its historical transactions would count them twice. Each account's
+current ledger balance is opening balance + assigned invoice payments − expenses.
+Accounts keep their own currency. This is local bookkeeping, not a bank connection.
+
+Select an invoice and choose **Record Payment** to enter the actual amount received,
+date, destination account, and reference. Multiple payments are supported. Partial
+payments leave the remaining amount due; overpayments show a credit. PDFs and reminder
+messages reflect the remaining balance. Review or correct payments in **Company
+Finances → Invoice payments**. Existing paid invoices appear as legacy, unassigned
+payments: edit one to record its actual amount, date, and bank account. That replaces
+the assumed full payment rather than adding a duplicate. Unassigned payments count
+toward invoice settlement but do not change a bank balance. Invoices with recorded
+payments cannot be deleted until those payments are removed, and their status is
+calculated from payments when editing invoice totals.
+
+Use **Expenses & receipts** to record company payments with date, vendor, category,
+amount, bank account, reference, and business purpose/notes. **Attach Receipt** embeds
+one PDF or image (up to 20 MB) per expense; a replacement attachment replaces the old
+one. **Export / Open Receipt** saves a copy. **Export CSV** exports all expense records
+for filtering by year/category in a spreadsheet or sharing with your accountant.
+Dates support both manual entry and the calendar picker.
+
+Bank details and receipts are stored locally in the ledger and included in ledger
+backups. Account numbers are masked in the list; the ledger and backup files are
+not encrypted by the app. Do not store online banking passwords in these fields.
+
+Run `make -f Makefile test-finance` for bookkeeping regression tests.

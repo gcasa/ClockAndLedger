@@ -7,7 +7,7 @@ APP = build/ClockAndLedger.app
 .PHONY: all macos run test docs clean
 all: macos
 macos: $(APP)/Contents/MacOS/ClockAndLedger
-$(APP)/Contents/MacOS/ClockAndLedger: $(SOURCES) $(wildcard Sources/*.h) Resources/Info.plist Resources/ClockAndLedger.icns Resources/InvoiceMail.applescript
+$(APP)/Contents/MacOS/ClockAndLedger: $(SOURCES) $(wildcard Sources/*.h) $(wildcard Sources/*.inc) Resources/Info.plist Resources/ClockAndLedger.icns Resources/InvoiceMail.applescript
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	$(CC) $(CFLAGS) $(SOURCES) -framework Cocoa -o $@
 	cp Resources/InvoiceMail.applescript $(APP)/Contents/Resources/InvoiceMail.applescript
@@ -64,3 +64,15 @@ test-edit:
 	mkdir -p build
 	$(CC) $(CFLAGS) Tests/InvoiceEditTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/InvoiceEditTests
 	./build/InvoiceEditTests
+
+.PHONY: test-finance
+test-finance:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/FinanceTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/FinanceTests
+	./build/FinanceTests
+
+.PHONY: test-status
+test-status:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/StatusBarTests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/StatusBarTests
+	./build/StatusBarTests

@@ -214,6 +214,19 @@ main (void)
       }
     NSLog (@"%@: red stamp on every paid page, absent from unpaid and unverified invoices", result == 0 ? @"PASS" : @"FAIL");
   }
+  {
+    NSString *paymentPath = @"build/Invoice-partial-payment.pdf";
+    NSString *exportError = nil;
+    [invoice removeObjectForKey: @"paymentUnverified"];
+    [invoice setObject: [NSNumber numberWithBool: NO] forKey: @"paid"];
+    [invoice setObject: [NSArray arrayWithObject: [NSDictionary dictionaryWithObject: [NSNumber numberWithInt: 5000] forKey: @"amount"]] forKey: @"payments"];
+    view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+    if (![view writePDFToPath: paymentPath error: &exportError]) result = 1;
+    pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: paymentPath]];
+    if (!pdf || [[pdf string] rangeOfString: @"Received: USD 50.00"].location == NSNotFound || [[pdf string] rangeOfString: @"PARTIALLY PAID"].location == NSNotFound || [[pdf string] rangeOfString: @"Balance due:"].location == NSNotFound) result = 1;
+    [pdf release]; [view release];
+    NSLog (@"%@: partial payment and remaining balance included in PDF", result == 0 ? @"PASS" : @"FAIL");
+  }
   [pool drain];
   return result;
 }

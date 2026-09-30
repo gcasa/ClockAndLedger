@@ -85,6 +85,27 @@ static void Check (BOOL ok, NSString *label)
   [self controlTextDidChange: [NSNotification notificationWithName: NSControlTextDidChangeNotification object: _issuedField]];
   Check ([[_dueField stringValue] isEqual: @"2027-01-30"], @"Manual entry still works after using calendar");
 }
+- (void) inspectFinanceForm: (NSTimer *)timer
+{
+  NSView *view; NSPopUpButton *account = nil; CLDateField *date = nil;
+  for (view in [[_dialog contentView] subviews])
+    { if ([view isKindOfClass: [NSPopUpButton class]]) account = (id)view;
+      if ([view isKindOfClass: [CLDateField class]]) date = (id)view; }
+  Check (account != nil && [account numberOfItems] == 2, @"Payment form includes bank account selector");
+  Check (date != nil, @"Payment form includes editable calendar field");
+  [account selectItemAtIndex: 1]; [date setStringValue: @"2026-09-29"];
+  [self acceptDialog: nil];
+}
+- (void) verifyFinanceForm
+{
+  NSDictionary *form;
+  [_ledger saveAccount: nil values: [NSDictionary dictionaryWithObjectsAndKeys: @"Checking", @"name", @"Bank", @"bank", @"1234", @"number", @"5678", @"routing", @"USD", @"currency", @"0", @"openingBalance", @"", @"notes", nil] error: NULL];
+  [[NSRunLoop currentRunLoop] addTimer: [NSTimer timerWithTimeInterval: 0.1 target: self selector: @selector(inspectFinanceForm:) userInfo: nil repeats: NO] forMode: NSModalPanelRunLoopMode];
+  form = [self editForm: @"Payment form test" labels: [NSArray arrayWithObjects: @"Date", @"Amount received", @"Bank account", @"Reference / notes", nil] values: [NSArray arrayWithObjects: [CLLedger today], @"50.00", @"", @"Transfer", nil]];
+  Check ([[form objectForKey: @"Bank account"] isEqual: [[[_ledger accounts] lastObject] objectForKey: @"id"]], @"Bank selection saves stable account ID");
+  Check ([[form objectForKey: @"Date"] isEqual: @"2026-09-29"], @"Payment date accepts manual entry");
+  Check ([[form objectForKey: @"Amount received"] isEqual: @"50.00"], @"Alternate payment amount preserved");
+}
 - (void) verifyTasks
 {
   [self invoiceClientChanged: nil];
@@ -205,6 +226,7 @@ int main (void)
   other = [[[ledger clients] lastObject] objectForKey: @"id"];
   [ledger saveTask: nil client: other name: @"Other client task" rate: @"1" error: NULL];
   controller = [[CLTestController alloc] initWithLedger: ledger];
+  [controller verifyFinanceForm];
   [controller verifyTasks];
   [controller verifyCalendar];
   [controller verifyIssuedForm];

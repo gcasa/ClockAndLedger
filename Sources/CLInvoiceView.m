@@ -111,7 +111,13 @@ CLDrawPaidStamp (NSRect page)
       CLAppendRows (rows, [NSString stringWithFormat: @"TOTAL:          %@ %@", currency,
         [CLLedger money: [invoice objectForKey: @"total"]]]);
       CLAppendRows (rows, @"");
-      CLAppendRows (rows, [[invoice objectForKey: @"paymentUnverified"] boolValue] ? @"Status: VERIFY PAYMENT IN QUICKBOOKS" : ([[invoice objectForKey: @"paid"] boolValue] ? @"Status: PAID" : @"Status: UNPAID"));
+      if ([invoice objectForKey: @"payments"] != nil)
+        {
+          long long credit = [[CLLedger receivedForInvoice: invoice] longLongValue] - [[invoice objectForKey: @"total"] longLongValue];
+          CLAppendRows (rows, [NSString stringWithFormat: @"Received: %@ %@   Balance due: %@ %@", currency, [CLLedger money: [CLLedger receivedForInvoice: invoice]], currency, [CLLedger money: [CLLedger balanceForInvoice: invoice]]]);
+          if (credit > 0) CLAppendRows (rows, [NSString stringWithFormat: @"Overpayment credit: %@ %@", currency, [CLLedger money: [NSNumber numberWithLongLong: credit]]]);
+        }
+      CLAppendRows (rows, [[invoice objectForKey: @"paymentUnverified"] boolValue] ? @"Status: VERIFY PAYMENT IN QUICKBOOKS" : ([[invoice objectForKey: @"paid"] boolValue] ? @"Status: PAID" : ([[CLLedger receivedForInvoice: invoice] longLongValue] > 0 ? @"Status: PARTIALLY PAID" : @"Status: UNPAID")));
       {
         NSString *notes = [business objectForKey: @"notes"];
         NSInteger days = [CLLedger netDaysForClient: client];

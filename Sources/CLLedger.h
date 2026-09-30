@@ -164,4 +164,14 @@
 + (NSString *) today;
 /** Calculate a line amount, rounded half up to cents. */
 + (NSNumber *) amountForSeconds: (NSNumber *)seconds rate: (NSNumber *)rate;
+- (NSArray *) accounts;
+- (NSArray *) expenses;
++ (NSNumber *) receivedForInvoice: (NSDictionary *)invoice;
++ (NSNumber *) balanceForInvoice: (NSDictionary *)invoice;
+- (NSNumber *) balanceForAccount: (NSString *)identifier;
+- (BOOL) saveAccount: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) saveExpense: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) deleteExpense: (NSString *)identifier error: (NSString **)error;
+- (BOOL) savePayment: (NSString *)identifier invoice: (NSString *)invoiceID values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) deletePayment: (NSString *)identifier invoice: (NSString *)invoiceID error: (NSString **)error;
 @end
