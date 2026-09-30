@@ -14,9 +14,9 @@ Source uses GNU C brace/indentation conventions and autogsdoc API comments.
   or monthly timesheet. View hours and charges and delete unbilled mistakes.
 - Define tasks per client with separate hourly rates; edit, archive and restore
   tasks while preserving the rates and names on existing time/invoices.
-- Bill a raw number of hours at a client's current hourly rate, with no timesheet required.
+- Bill a raw number of hours using an active client task's current rate, with no timesheet required.
 - Optionally convert a client's unbilled timesheet hours into an invoice at their recorded rates.
-- Open an email draft to the client's current email address with complete invoice text.
+- Open an Apple Mail draft with an invoice PDF, complete invoice text, and a per-client payment reminder.
 - Preserve original time rates and invoice snapshots when client/business
   details change. Billed time is locked against deletion or duplicate billing.
 - Set a tax percentage and due date; mark invoices paid/unpaid and see overdue
@@ -69,7 +69,7 @@ The app is created at `build/ClockAndLedger.app`. It is a local unsigned build.
 
 1. Open **Business**, enter your business and payment details, choose a
    currency, then save. All monetary values use two decimal places.
-2. Open **Clients** and add a client with their hourly rate and **Net payment days** (default 30; 0 means due on receipt). Invoice due dates are calculated by adding these calendar days to the issue date, for both direct billing and timesheet invoices. You can override the due date before issuing an invoice. Changing client terms does not change existing invoices.
+2. Open **Clients** and add a client with their hourly rate and **Net payment days** (default 30; 0 means due on receipt). Invoice due dates are calculated by adding these calendar days to the issue date, for both direct billing and timesheet invoices. You can override the due date before issuing an invoice. Changing client terms does not change existing invoices. In the same client editor, **Starting invoice #** optionally starts a client sequence (for example, 500 gives `INV-00500`). Blank uses business numbering. Both billing workflows advance the client sequence and skip numbers already used, including deleted invoices. Once the client sequence has been used, its starting number is fixed; existing invoices keep their numbers.
 3. In **Client Tasks**, select a client and add work types such as Design,
    Development or Support, each with its own hourly rate.
 4. Optionally open **Timesheets**, choose the client and task (or **Client default**), and enter
@@ -79,17 +79,19 @@ The app is created at `build/ClockAndLedger.app`. It is a local unsigned build.
    **Daily timesheet** opens a row for every date; enter decimal hours
    (`1.5` means 1 hour 30 minutes) and leave unused days blank or zero.
    A description is required when using the client default rate.
-5. Open **Invoices**, choose the client and enter a raw number of **Hours**,
-   tax percentage and due date, then **Create Invoice**. Billing uses the displayed
-   client rate and does not consume or create timesheet entries. Alternatively,
+5. Open **Invoices**, choose the client and an active **Task**, and enter **Hours**,
+   tax percentage, **Issued** date and due date, then **Create Invoice**. The issued
+   date defaults to today; changing it recalculates the due date using the client’s
+   net payment days. You can still override the due date. Billing uses the displayed
+   task rate and does not consume or create timesheet entries. Alternatively,
    in **Timesheets**, review the selected client's total and available hours and
    use **Create Invoice…** to convert all their unbilled time at its recorded rates.
    A running timer is excluded until stopped. Converted entries cannot be billed again.
-6. Preview/print the invoice, or click **Email Invoice…** to open a draft in your
-   default email application, addressed to the client's current email. The full
-   invoice is included as text in the message; review it and send from that app.
-   A configured email application is required. Use **Mark Paid / Unpaid** when
-   payment arrives. Both paid and unpaid invoices remain in the invoice history.
+6. Preview/print the invoice, or click **Email Invoice…** to open an Apple Mail
+   draft addressed to the client's current email. The payment message appears
+   above the invoice text and the complete PDF is attached. Review and send the
+   draft in Mail. The **Business** email should match an enabled Mail account.
+   Use **Mark Paid / Unpaid** when payment is received.
 
 Rates and amounts use `.` as the decimal separator. Dates use `YYYY-MM-DD`.
 Tax is a user-entered percentage, not a jurisdiction-specific tax calculation.
@@ -125,14 +127,14 @@ time. Data is stored locally in plaintext; backup copies use the same format.
 macOS model tests:
 
 ```sh
-make -f Makefile test test-import test-time
+make -f Makefile test test-import test-time test-reminders
 ```
 
 Native macOS print-pipeline test (writes an 80-entry, multi-page sample PDF
 under `build/`, without sending anything to a printer):
 
 ```sh
-make -f Makefile test-print
+make -f Makefile test-print test-ui
 ```
 
 GNUstep model tests, after sourcing `GNUstep.sh`:
@@ -211,8 +213,67 @@ time as well as a date to avoid timezone-dependent date decoding in GNUstep.
 
 ### Business branding and invoice numbers
 
-In **Business**, choose a PNG, JPEG, TIFF or icon image (up to 5 MB), then save your business details. The logo appears on invoice previews and printed/PDF pages, with its proportions preserved. Logo bytes are stored in the ledger and each issued invoice, so moving the original image or replacing/removing your logo does not change older invoices. Email drafts remain plain text; use Print to save a branded PDF.
+In **Business**, choose a PNG, JPEG, TIFF or icon image (up to 5 MB), then save your business details. The logo appears on invoice previews and printed/PDF pages, with its proportions preserved. Logo bytes are stored in the ledger and each issued invoice, so moving the original image or replacing/removing your logo does not change older invoices. Email drafts include the branded, multipage invoice PDF as an attachment.
 
 Set **Starting invoice number** before issuing or importing your first invoice. Leaving it blank starts at 1 (`INV-00001`); entering 500 starts at `INV-00500`, followed by `INV-00501`. The starting number is fixed once invoices exist. Existing ledgers keep their numbering, and imported invoices keep displaying their original QuickBooks numbers.
 
 To delete an invoice, select it in **Invoices** and click **Delete Invoice…**. The confirmation defaults to Cancel and warns that deletion cannot be undone. Confirming removes the invoice and its payment status from the ledger totals and returns linked time entries to unbilled status. Standalone invoices do not create time entries when deleted. Deleted invoice numbers remain reserved, even if every invoice is deleted. Printed/emailed copies and QuickBooks records are unaffected; deleting a paid invoice does not refund payment.
+
+
+## Client payment reminders and background email (macOS)
+
+In **Clients**, select a client and choose **Email Reminders…**. Configure
+**Days before due** (default 3; 0 means the due date), the friendly **Payment
+reminder**, and the separate **Overdue reminder**. Blank messages use built-in
+wording; overdue wording asks for prompt payment and a payment date. Templates
+support `{client}`, `{invoice}`, `{total}`, and `{dueDate}`. These current client
+settings also control the message above the invoice in manually opened drafts.
+Paid invoices use a thank-you message instead of a payment demand.
+
+Turn on **Send reminders through Apple Mail** to enable unattended delivery for
+that client. This is off by default. Set valid client and business email
+addresses first, and configure the business address in an enabled Apple Mail
+account. On first use, allow the app to control Mail in macOS Automation
+permissions. No email passwords are stored in the ledger.
+
+While running, the app checks once per minute and submits at most one friendly
+reminder per invoice within the configured window, then one separate overdue
+reminder after its due date. If the app first sees an invoice when it is already
+late, only the overdue reminder is sent. Both include the complete invoice PDF.
+Paid, zero-total, and unverified imported invoices are excluded. New settings
+apply to existing eligible unpaid invoices as well as future invoices.
+
+Closing the main window leaves the app running in the background. Click its
+Dock icon to reopen it. **Quit** stops checks, and nothing is sent while the Mac
+is asleep or the app is not running; the next check catches up when it resumes.
+The app does not install a login item. Apple Mail may queue messages while
+offline: “submitted” means Mail accepted the message, not that the recipient
+has received it. Check Mail for delivery failures or bounce notices.
+
+Attempts are saved before handing mail to Apple Mail to avoid repeated sends
+after a crash. Errors and interrupted attempts show **Review email** in the
+invoice table. Select the invoice and click **Review Email…**, inspect Mail's
+Drafts, Outbox and Sent, then either confirm submission or explicitly allow a
+retry. Remove any stale draft before retrying. Turning off automatic reminders
+stops future checks for that client; it cannot recall messages already handed
+to Mail. Temporary PDF and message files are retained under
+`~/Library/Caches/ClockAndLedger/MailExports` so queued messages and drafts can
+still access their attachments.
+
+Direct invoices now require an active task from **Client Tasks**. Select it in
+**Invoices** and enter hours: the displayed task rate is snapshotted with the
+task name when the invoice is issued. Later task edits do not alter the invoice.
+Timesheet invoices continue to use each time entry's recorded task and rate.
+Apple Mail delivery is macOS-only; the ledger, task billing and reminder policy
+tests also build under GNUstep.
+
+The **Issued** date is saved on the invoice and shown in the invoice list, PDF,
+and email text. Past and future dates are supported; the due date must be on or
+after the issued date. Timesheet invoice creation also has an Issued field;
+changing it calculates the due date from that client's terms while preserving
+the time entries' original work dates. Reminder timing follows the saved dates.
+
+Paid invoices display a large, translucent red diagonal **PAID** stamp on every
+page in previews, printed output and PDF email attachments. Marking an invoice
+unpaid removes the stamp from newly generated output. Unverified imported
+payment states are not stamped.

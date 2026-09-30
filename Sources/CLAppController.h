@@ -1,5 +1,5 @@
 #import <AppKit/AppKit.h>
-@class CLLedger;
+@class CLLedger, CLInvoiceMailer;
 
 /** Native application controller. Uses classic AppKit controls, explicit
  * reference counting and target/action; no nibs or Objective-C 2 features. */
@@ -19,6 +19,7 @@
   NSTableView *_invoicesTable;
   NSPopUpButton *_timeClient;
   NSPopUpButton *_invoiceClient;
+  NSPopUpButton *_invoiceTask;
   NSTextField *_taskField;
   NSTextField *_timerLabel;
   NSTextField *_summaryLabel;
@@ -27,10 +28,21 @@
   NSTextField *_invoiceRate;
   NSTextField *_taxField;
   NSTextField *_dueField;
+  NSTextField *_issuedField;
+  NSTextField *_dialogIssuedField;
+  NSTextField *_dialogDueField;
+  NSString *_dialogInvoiceClientID;
   NSMutableDictionary *_businessFields;
   NSData *_businessLogoData;
   NSImageView *_businessLogoPreview;
   NSTimer *_pulse;
+  NSTimer *_reminderPulse;
+  CLInvoiceMailer *_mailer;
+  BOOL _mailStarting;
+  NSString *_mailInvoiceID;
+  NSString *_mailStage;
+  NSTextField *_mailStatus;
+  id _backgroundActivity;
   NSPanel *_dialog;
   BOOL _dialogAccepted;
   NSDistributedLock *_lock;
@@ -72,7 +84,13 @@
 - (void) invoiceClientChanged: (id)sender;
 /** Convert the selected timesheet client's unbilled time to an invoice. */
 - (void) invoiceTimesheet: (id)sender;
-/** Open an email draft containing the selected invoice. */
+- (void) controlTextDidChange: (NSNotification *)notification;
+- (void) invoiceTaskChanged: (id)sender;
+- (void) editClientReminders: (id)sender;
+- (void) checkReminders: (id)sender;
+- (void) reviewReminder: (id)sender;
+- (BOOL) applicationShouldHandleReopen: (NSApplication *)application hasVisibleWindows: (BOOL)visible;
+/** Open an Apple Mail draft with a payment message and invoice PDF attachment. */
 - (void) emailInvoice: (id)sender;
 /** Create an invoice from a raw number of hours. */
 - (void) createInvoice: (id)sender;

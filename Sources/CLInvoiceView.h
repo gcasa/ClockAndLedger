@@ -14,6 +14,8 @@
 - (id) initWithInvoice: (NSDictionary *)invoice;
 /** Complete invoice text for an email draft. */
 - (NSString *) emailText;
+/** Export every printable page, without showing a print dialog. */
+- (BOOL) writePDFToPath: (NSString *)path error: (NSString **)error;
 /** Run the native print dialog for this invoice. */
 - (void) printInvoice: (id)sender;
 @end

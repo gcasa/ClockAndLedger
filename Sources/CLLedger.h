@@ -32,6 +32,12 @@
 - (BOOL) saveClient: (NSString *)identifier name: (NSString *)name
              email: (NSString *)email address: (NSString *)address
               rate: (NSString *)rate netDays: (NSString *)netDays error: (NSString **)error;
+/** Optional client numbering; blank uses the business sequence. Once used,
+ * the starting number is fixed and the client counter survives deletion. */
+- (BOOL) saveClient: (NSString *)identifier name: (NSString *)name
+             email: (NSString *)email address: (NSString *)address
+              rate: (NSString *)rate netDays: (NSString *)netDays
+ startingInvoiceNumber: (NSString *)startingNumber error: (NSString **)error;
 /** Legacy clients default to Net 30. */
 + (NSInteger) netDaysForClient: (NSDictionary *)client;
 /** Calculate a due date from an issue date (YYYY-MM-DD) and client terms. */
@@ -85,6 +91,37 @@
  * Does not create or consume timesheet entries. nil hours uses unbilled time. */
 - (BOOL) invoiceClient: (NSString *)identifier hours: (NSString *)hours tax: (NSString *)tax
               dueDate: (NSString *)dueDate error: (NSString **)error;
+/** Direct billing using an active task's current rate and snapshotted name. */
+- (BOOL) invoiceClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+              dueDate: (NSString *)dueDate error: (NSString **)error;
+/** Issue using an explicit YYYY-MM-DD date; nil dueDate adds client net days.
+ * Past and future issue dates are allowed. Due date must not precede issue date.
+ * nil hours invoices unbilled time at its recorded dates and rates. */
+- (BOOL) invoiceClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+           issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate error: (NSString **)error;
+/** Per-client email settings. Empty messages use the built-in templates. */
+- (BOOL) saveRemindersForClient: (NSString *)identifier enabled: (BOOL)enabled
+                   daysBefore: (NSString *)days message: (NSString *)message
+               overdueMessage: (NSString *)overdue error: (NSString **)error;
++ (BOOL) validEmailAddress: (NSString *)email;
++ (NSInteger) reminderDaysForClient: (NSDictionary *)client;
++ (NSString *) defaultReminderMessage: (BOOL)overdue;
+/** Current client message with invoice placeholders expanded. */
+- (NSString *) paymentMessageForInvoice: (NSDictionary *)invoice onDate: (NSString *)date;
+/** Eligible stage: due or overdue. Paid/unverified invoices and previously
+ * attempted stages are excluded. A pending/review attempt blocks further mail. */
+- (NSString *) reminderStageForInvoice: (NSDictionary *)invoice onDate: (NSString *)date;
+/** Persist an attempt before handing it to Mail, preventing duplicate sends. */
+- (BOOL) beginReminder: (NSString *)identifier stage: (NSString *)stage
+               onDate: (NSString *)date error: (NSString **)error;
+- (BOOL) finishReminder: (NSString *)identifier stage: (NSString *)stage
+             submitted: (BOOL)submitted detail: (NSString *)detail error: (NSString **)error;
+/** After checking Mail, mark an uncertain attempt submitted or allow a retry. */
+- (BOOL) resolveReminder: (NSString *)identifier stage: (NSString *)stage
+              submitted: (BOOL)submitted error: (NSString **)error;
++ (NSString *) reminderStatusForInvoice: (NSDictionary *)invoice;
 /** Whether any invoice has ever been issued or imported, including deletions. */
 - (BOOL) hasIssuedInvoices;
 /** Permanently delete an invoice, release its linked time for billing, and

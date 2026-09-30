@@ -1,15 +1,16 @@
 # macOS convenience build; GNUstep uses GNUmakefile (make -f GNUmakefile).
 CC = clang
 CFLAGS = -std=gnu89 -fno-objc-arc -Wall -Wextra -Wno-unused-parameter -Wno-deprecated-declarations -ISources
-SOURCES = Sources/main.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m Sources/CLAppController.m Sources/CLInvoiceView.m
+SOURCES = Sources/main.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m Sources/CLAppController.m Sources/CLInvoiceView.m Sources/CLInvoiceMailer.m
 APP = build/ClockAndLedger.app
 
 .PHONY: all macos run test docs clean
 all: macos
 macos: $(APP)/Contents/MacOS/ClockAndLedger
-$(APP)/Contents/MacOS/ClockAndLedger: $(SOURCES) $(wildcard Sources/*.h) Resources/Info.plist Resources/ClockAndLedger.icns
+$(APP)/Contents/MacOS/ClockAndLedger: $(SOURCES) $(wildcard Sources/*.h) Resources/Info.plist Resources/ClockAndLedger.icns Resources/InvoiceMail.applescript
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	$(CC) $(CFLAGS) $(SOURCES) -framework Cocoa -o $@
+	cp Resources/InvoiceMail.applescript $(APP)/Contents/Resources/InvoiceMail.applescript
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	cp Resources/ClockAndLedger.icns $(APP)/Contents/Resources/ClockAndLedger.icns
 run: macos
@@ -45,3 +46,15 @@ test-time:
 	mkdir -p build
 	$(CC) $(CFLAGS) Tests/TimeEntryTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/TimeEntryTests
 	./build/TimeEntryTests
+
+.PHONY: test-reminders
+test-reminders:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/ReminderTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/ReminderTests
+	./build/ReminderTests
+
+.PHONY: test-ui
+test-ui:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/InvoiceUITests.m Sources/CLAppController.m Sources/CLInvoiceMailer.m Sources/CLInvoiceView.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Cocoa -o build/InvoiceUITests
+	./build/InvoiceUITests

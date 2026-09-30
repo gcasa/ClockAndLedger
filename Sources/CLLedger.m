@@ -53,6 +53,7 @@ CLValidDate (NSString *value)
 {
   NSDateFormatter *formatter = [[[NSDateFormatter alloc] init] autorelease];
   NSDate *date;
+  if (![value isKindOfClass: [NSString class]]) return NO;
   [formatter setLocale: [[[NSLocale alloc] initWithLocaleIdentifier: @"en_US_POSIX"] autorelease]];
   [formatter setDateFormat: @"yyyy-MM-dd"];
   [formatter setLenient: NO];
@@ -126,6 +127,17 @@ CLValidClient (id record)
   return CLFields (record, @"id,name,email,address", @"rate")
     && [[record objectForKey: @"id"] length] > 0
     && [[record objectForKey: @"name"] length] > 0
+    && CLStartingNumber (record) > 0
+    && (([record objectForKey: @"autoReminders"] == nil && [record objectForKey: @"reminderDays"] == nil
+         && [record objectForKey: @"reminderMessage"] == nil && [record objectForKey: @"overdueMessage"] == nil)
+        || (CLFields (record, @"reminderMessage,overdueMessage", @"autoReminders,reminderDays")
+            && [[record objectForKey: @"autoReminders"] intValue] <= 1
+            && [[record objectForKey: @"reminderDays"] integerValue] <= 36500))
+    && ([record objectForKey: @"nextClientInvoiceNumber"] == nil
+        || (CLFields (record, @"", @"nextClientInvoiceNumber")
+            && [[record objectForKey: @"startingInvoiceNumber"] length] > 0
+            && [[record objectForKey: @"nextClientInvoiceNumber"] longLongValue] > CLStartingNumber (record)
+            && [[record objectForKey: @"nextClientInvoiceNumber"] longLongValue] <= 2147483646))
     && [[record objectForKey: @"rate"] longLongValue] <= 100000000000LL
     && ([record objectForKey: @"netDays"] == nil
         || (CLFields (record, @"", @"netDays") && [[record objectForKey: @"netDays"] integerValue] <= 36500));
@@ -174,6 +186,37 @@ CLValidInvoiceID (id identifier, long long start, long long next)
 }
 
 static BOOL
+CLValidReminderHistory (id history)
+{
+  NSEnumerator *keys;
+  NSString *key;
+  if (history == nil) return YES;
+  if (![history isKindOfClass: [NSDictionary class]]) return NO;
+  keys = [history keyEnumerator];
+  while ((key = [keys nextObject]) != nil)
+    {
+      NSDictionary *attempt = [history objectForKey: key];
+      NSString *status;
+      if (![key isEqual: @"due"] && ![key isEqual: @"overdue"]) return NO;
+      if (!CLFields (attempt, @"status,date,detail", @"") || !CLValidDate ([attempt objectForKey: @"date"])) return NO;
+      status = [attempt objectForKey: @"status"];
+      if (![status isEqual: @"pending"] && ![status isEqual: @"submitted"] && ![status isEqual: @"review"]) return NO;
+    }
+  return YES;
+}
+
+/* Date-only UTC arithmetic avoids daylight-saving offsets in reminder windows. */
+static NSInteger
+CLDaysUntil (NSString *date, NSString *due)
+{
+  NSDateFormatter *formatter = [[[NSDateFormatter alloc] init] autorelease];
+  [formatter setLocale: [[[NSLocale alloc] initWithLocaleIdentifier: @"en_US_POSIX"] autorelease]];
+  [formatter setTimeZone: [NSTimeZone timeZoneForSecondsFromGMT: 0]];
+  [formatter setDateFormat: @"yyyy-MM-dd"];
+  return (NSInteger)llround ([[formatter dateFromString: due] timeIntervalSinceDate: [formatter dateFromString: date]] / 86400.0);
+}
+
+static BOOL
 CLValidLedger (id data)
 {
   NSArray *clients;
@@ -192,6 +235,12 @@ CLValidLedger (id data)
       || [[data objectForKey: @"nextInvoice"] longLongValue] > 2147483646
       || !CLValidBusiness ([data objectForKey: @"business"]))
     return NO;
+  {
+    id reserved = [data objectForKey: @"reservedInvoiceNumbers"];
+    if (reserved != nil && ![reserved isKindOfClass: [NSArray class]]) return NO;
+    for (i = 0; i < [reserved count]; i++)
+      if (![[reserved objectAtIndex: i] isKindOfClass: [NSString class]]) return NO;
+  }
   clients = [data objectForKey: @"clients"];
   entries = [data objectForKey: @"entries"];
   invoices = [data objectForKey: @"invoices"];
@@ -226,10 +275,13 @@ CLValidLedger (id data)
       NSArray *lines;
       unsigned int j;
       if (!CLFields (invoice, @"id,date,dueDate,taxPercent", @"subtotal,tax,total,paid")
+          || ([invoice objectForKey: @"displayNumber"] != nil
+              && !CLValidInvoiceID ([invoice objectForKey: @"displayNumber"], 1, 2147483646))
           || !CLValidClient ([invoice objectForKey: @"client"])
           || !CLValidBusiness ([invoice objectForKey: @"business"])
           || !CLValidDate ([invoice objectForKey: @"date"])
           || !CLValidDate ([invoice objectForKey: @"dueDate"])
+          || !CLValidReminderHistory ([invoice objectForKey: @"reminders"])
           || CLDecimal ([invoice objectForKey: @"taxPercent"], 2) == nil
           || [invoiceIDs containsObject: [invoice objectForKey: @"id"]]
           || !CLValidInvoiceID ([invoice objectForKey: @"id"], CLStartingNumber ([data objectForKey: @"business"]), [[data objectForKey: @"nextInvoice"] longLongValue]))
@@ -335,7 +387,7 @@ CLValidLedger (id data)
           [_data setObject: [NSNumber numberWithInt: 1] forKey: @"nextInvoice"];
           [_data setObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:
             @"Your business", @"name", @"", @"address", @"", @"email",
-            @"USD", @"currency", @"Payment due within 30 days.", @"notes", nil]
+            @"USD", @"currency", @"", @"notes", nil]
             forKey: @"business"];
         }
     }
@@ -485,7 +537,18 @@ CLValidLedger (id data)
              email: (NSString *)email address: (NSString *)address
               rate: (NSString *)rate netDays: (NSString *)netDays error: (NSString **)error
 {
+  return [self saveClient: identifier name: name email: email address: address rate: rate netDays: netDays
+    startingInvoiceNumber: [[self clientWithID: identifier] objectForKey: @"startingInvoiceNumber"] error: error];
+}
+
+- (BOOL) saveClient: (NSString *)identifier name: (NSString *)name
+             email: (NSString *)email address: (NSString *)address
+              rate: (NSString *)rate netDays: (NSString *)netDays
+ startingInvoiceNumber: (NSString *)startingNumber error: (NSString **)error
+{
   NSNumber *cents = [CLLedger centsFromString: rate];
+  NSString *startText = CLTrim (startingNumber != nil ? startingNumber : @"");
+  long long start = CLStartingNumber ([NSDictionary dictionaryWithObject: startText forKey: @"startingInvoiceNumber"]);
   NSString *days = CLTrim (netDays);
   NSMutableDictionary *backup;
   NSMutableDictionary *client;
@@ -498,6 +561,11 @@ CLValidLedger (id data)
   client = [self record: identifier in: @"clients"];
   if (identifier != nil && client == nil)
     return CLFail (error, @"The client no longer exists.");
+  if (start < 1)
+    return CLFail (error, @"Enter a starting invoice number from 1 to 2147483645, or leave it blank to use business numbering.");
+  if ([client objectForKey: @"nextClientInvoiceNumber"] != nil
+      && ([startText length] == 0 || start != CLStartingNumber (client)))
+    return CLFail (error, @"This client's starting invoice number cannot change after its custom numbering has been used.");
   backup = [self backup];
   if (client == nil)
     {
@@ -505,6 +573,7 @@ CLValidLedger (id data)
       [client setObject: CLIdentifier () forKey: @"id"];
       [[_data objectForKey: @"clients"] addObject: client];
     }
+  [client setObject: [startText length] == 0 ? @"" : [NSString stringWithFormat: @"%lld", start] forKey: @"startingInvoiceNumber"];
   [client setObject: CLTrim (name) forKey: @"name"];
   [client setObject: CLTrim (email) forKey: @"email"];
   [client setObject: address forKey: @"address"];
@@ -594,7 +663,24 @@ CLValidLedger (id data)
 - (BOOL) invoiceClient: (NSString *)identifier hours: (NSString *)hours tax: (NSString *)tax
               dueDate: (NSString *)dueDate error: (NSString **)error
 {
+  return [self invoiceClient: identifier task: nil hours: hours tax: tax dueDate: dueDate error: error];
+}
+
+- (BOOL) invoiceClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+              dueDate: (NSString *)dueDate error: (NSString **)error
+{
+  return [self invoiceClient: identifier task: taskID hours: hours tax: tax
+    issuedDate: [CLLedger today] dueDate: dueDate error: error];
+}
+
+- (BOOL) invoiceClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+           issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate error: (NSString **)error
+{
   NSDictionary *client = [self clientWithID: identifier];
+  NSDictionary *task = [self record: taskID in: @"tasks"];
+  NSDictionary *rateSource = task != nil ? task : client;
   NSDecimalNumber *percent = CLDecimal (tax, 2);
   NSMutableArray *lines = [NSMutableArray array];
   NSMutableDictionary *backup;
@@ -604,15 +690,24 @@ CLValidLedger (id data)
   long long taxCents;
   unsigned int i;
   int sequence;
+  long long displaySequence;
+  NSString *displayNumber;
+  NSMutableSet *usedNumbers;
+  BOOL customNumbering;
   NSDecimalNumber *taxAmount;
   NSDecimalNumberHandler *rounding;
 
+  if (taskID != nil && (hours == nil || task == nil || [[task objectForKey: @"archived"] boolValue]
+      || ![[task objectForKey: @"clientID"] isEqual: identifier]))
+    return CLFail (error, @"Choose an active task belonging to this client for direct billing.");
+  if (!CLValidDate (issuedDate))
+    return CLFail (error, @"Enter a valid issued date (YYYY-MM-DD).");
   if (dueDate == nil)
-    dueDate = [self dueDateForClient: identifier invoiceDate: [CLLedger today]];
+    dueDate = [self dueDateForClient: identifier invoiceDate: issuedDate];
   if (client == nil || percent == nil
       || [percent compare: [NSDecimalNumber decimalNumberWithString: @"100"]] == NSOrderedDescending
-      || !CLValidDate (dueDate) || [dueDate compare: [CLLedger today]] == NSOrderedAscending)
-    return CLFail (error, @"Choose a client, a tax percentage from 0 to 100 and a valid due date on or after today (YYYY-MM-DD).");
+      || !CLValidDate (dueDate) || [dueDate compare: issuedDate] == NSOrderedAscending)
+    return CLFail (error, @"Choose a client, a tax percentage from 0 to 100 and a valid due date on or after the issued date (YYYY-MM-DD).");
   if (hours != nil)
     {
       NSDecimalNumber *duration = CLDecimal (hours, 4);
@@ -624,15 +719,21 @@ CLValidLedger (id data)
       rounding = [NSDecimalNumberHandler decimalNumberHandlerWithRoundingMode: NSRoundPlain
         scale: 0 raiseOnExactness: NO raiseOnOverflow: YES raiseOnUnderflow: YES raiseOnDivideByZero: YES];
       amount = [duration decimalNumberByMultiplyingBy:
-        [NSDecimalNumber decimalNumberWithDecimal: [[client objectForKey: @"rate"] decimalValue]]];
+        [NSDecimalNumber decimalNumberWithDecimal: [[rateSource objectForKey: @"rate"] decimalValue]]];
       subtotal = [[amount decimalNumberByRoundingAccordingToBehavior: rounding] longLongValue];
       line = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-        CLIdentifier (), @"id", identifier, @"clientID", [CLLedger today], @"date",
+        CLIdentifier (), @"id", identifier, @"clientID", issuedDate, @"date",
         @"Professional services", @"description", @"", @"invoiceID",
         [duration stringValue], @"hours",
         [NSNumber numberWithLongLong: MAX (1, [[duration decimalNumberByMultiplyingBy:
           [NSDecimalNumber decimalNumberWithString: @"3600"]] longLongValue])], @"seconds",
-        [client objectForKey: @"rate"], @"rate", [NSNumber numberWithLongLong: subtotal], @"amount", nil];
+        [rateSource objectForKey: @"rate"], @"rate", [NSNumber numberWithLongLong: subtotal], @"amount", nil];
+      if (task != nil)
+        {
+          [line setObject: taskID forKey: @"taskID"];
+          [line setObject: [task objectForKey: @"name"] forKey: @"taskName"];
+          [line setObject: @"" forKey: @"description"];
+        }
       [lines addObject: line];
     }
   for (i = 0; hours == nil && i < [[self entries] count]; i++)
@@ -652,6 +753,19 @@ CLValidLedger (id data)
     return CLFail (error, @"This client has no unbilled time. Stop any running timer before invoicing it.");
   if ([[_data objectForKey: @"nextInvoice"] intValue] >= 2147483646)
     return CLFail (error, @"The invoice number limit has been reached.");
+  customNumbering = [[client objectForKey: @"startingInvoiceNumber"] length] > 0;
+  displaySequence = customNumbering ? ([client objectForKey: @"nextClientInvoiceNumber"] != nil
+    ? [[client objectForKey: @"nextClientInvoiceNumber"] longLongValue] : CLStartingNumber (client))
+    : [[_data objectForKey: @"nextInvoice"] longLongValue];
+  usedNumbers = [NSMutableSet setWithArray: [_data objectForKey: @"reservedInvoiceNumbers"] ?: [NSArray array]];
+  [usedNumbers addObjectsFromArray: [_data objectForKey: @"deletedInvoiceIDs"] ?: [NSArray array]];
+  for (i = 0; i < [[self invoices] count]; i++)
+    [usedNumbers addObject: [CLLedger invoiceNumber: [[self invoices] objectAtIndex: i]]];
+  do {
+    if (displaySequence >= 2147483646)
+      return CLFail (error, @"The invoice number limit has been reached.");
+    displayNumber = [NSString stringWithFormat: @"INV-%05lld", displaySequence++];
+  } while ([usedNumbers containsObject: displayNumber]);
   backup = [self backup];
   sequence = [[_data objectForKey: @"nextInvoice"] intValue];
   invoiceID = [NSString stringWithFormat: @"INV-%05d", sequence];
@@ -662,7 +776,7 @@ CLValidLedger (id data)
     decimalNumberByDividingBy: [NSDecimalNumber decimalNumberWithString: @"100"]];
   taxCents = [[taxAmount decimalNumberByRoundingAccordingToBehavior: rounding] longLongValue];
   invoice = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-    invoiceID, @"id", [CLLedger today], @"date", dueDate, @"dueDate",
+    invoiceID, @"id", issuedDate, @"date", dueDate, @"dueDate",
     [NSDictionary dictionaryWithDictionary: client], @"client",
     [NSDictionary dictionaryWithDictionary: [self business]], @"business",
     lines, @"lines", [percent stringValue], @"taxPercent",
@@ -670,6 +784,12 @@ CLValidLedger (id data)
     [NSNumber numberWithLongLong: taxCents], @"tax",
     [NSNumber numberWithLongLong: subtotal + taxCents], @"total",
     [NSNumber numberWithBool: NO], @"paid", nil];
+  [invoice setObject: displayNumber forKey: @"displayNumber"];
+  if (customNumbering)
+    [[self record: identifier in: @"clients"] setObject: [NSNumber numberWithLongLong: displaySequence] forKey: @"nextClientInvoiceNumber"];
+  if ([_data objectForKey: @"reservedInvoiceNumbers"] == nil)
+    [_data setObject: [NSMutableArray array] forKey: @"reservedInvoiceNumbers"];
+  [[_data objectForKey: @"reservedInvoiceNumbers"] addObject: displayNumber];
   for (i = 0; hours == nil && i < [lines count]; i++)
     [[self record: [[lines objectAtIndex: i] objectForKey: @"id"] in: @"entries"]
       setObject: invoiceID forKey: @"invoiceID"];
@@ -695,6 +815,10 @@ CLValidLedger (id data)
   if ([_data objectForKey: @"deletedInvoiceIDs"] == nil)
     [_data setObject: [NSMutableArray array] forKey: @"deletedInvoiceIDs"];
   [[_data objectForKey: @"deletedInvoiceIDs"] addObject: identifier];
+  if ([_data objectForKey: @"reservedInvoiceNumbers"] == nil)
+    [_data setObject: [NSMutableArray array] forKey: @"reservedInvoiceNumbers"];
+  if (![[_data objectForKey: @"reservedInvoiceNumbers"] containsObject: [CLLedger invoiceNumber: invoice]])
+    [[_data objectForKey: @"reservedInvoiceNumbers"] addObject: [CLLedger invoiceNumber: invoice]];
   for (i = 0; i < [[self entries] count]; i++)
     {
       NSMutableDictionary *entry = [[self entries] objectAtIndex: i];
@@ -726,7 +850,8 @@ CLValidLedger (id data)
 + (NSString *) invoiceNumber: (NSDictionary *)invoice
 {
   NSString *source = [invoice objectForKey: @"sourceNumber"];
-  return [source length] > 0 ? source : [invoice objectForKey: @"id"];
+  if ([source length] > 0) return source;
+  return [invoice objectForKey: @"displayNumber"] ?: [invoice objectForKey: @"id"];
 }
 
 - (BOOL) saveBusiness: (NSDictionary *)business error: (NSString **)error
@@ -1197,6 +1322,157 @@ CLValidLedger (id data)
   if (epoch != nil)
     return [[NSDate date] timeIntervalSince1970] - [epoch doubleValue];
   return -[[[self timer] objectForKey: @"started"] timeIntervalSinceNow];
+}
+
+
++ (BOOL) validEmailAddress: (NSString *)email
+{
+  NSArray *parts;
+  if (![email isKindOfClass: [NSString class]] || [email length] > 254
+      || [email rangeOfCharacterFromSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound
+      || [email rangeOfCharacterFromSet: [NSCharacterSet characterSetWithCharactersInString: @",;<>\"\\"]].location != NSNotFound)
+    return NO;
+  parts = [email componentsSeparatedByString: @"@"];
+  return [parts count] == 2 && [[parts objectAtIndex: 0] length] > 0 && [[parts objectAtIndex: 1] length] > 0;
+}
+
++ (NSInteger) reminderDaysForClient: (NSDictionary *)client
+{
+  return [client objectForKey: @"reminderDays"] == nil ? 3 : [[client objectForKey: @"reminderDays"] integerValue];
+}
+
++ (NSString *) defaultReminderMessage: (BOOL)overdue
+{
+  return overdue
+    ? @"Hello {client},\n\nInvoice {invoice} for {total} was due on {dueDate} and remains unpaid. Please arrange payment promptly and confirm when we can expect it. If you have already paid, please send the payment details so we can reconcile our records."
+    : @"Hello {client},\n\nThis is a friendly reminder that payment of {total} for invoice {invoice} is due on {dueDate}. The invoice PDF is attached. Thank you for your business. If you have already paid, please let us know.";
+}
+
+- (BOOL) saveRemindersForClient: (NSString *)identifier enabled: (BOOL)enabled
+                   daysBefore: (NSString *)days message: (NSString *)message
+               overdueMessage: (NSString *)overdue error: (NSString **)error
+{
+  NSMutableDictionary *client = [self record: identifier in: @"clients"];
+  NSMutableDictionary *backup;
+  NSString *value = CLTrim (days);
+  if (client == nil) return CLFail (error, @"Select a client first.");
+  if ([value length] == 0 || [value length] > 5 || [value integerValue] > 36500
+      || [value rangeOfCharacterFromSet: [[NSCharacterSet characterSetWithCharactersInString: @"0123456789"] invertedSet]].location != NSNotFound)
+    return CLFail (error, @"Enter whole reminder days from 0 to 36500. Zero sends on the due date.");
+  if (enabled && (![CLLedger validEmailAddress: [client objectForKey: @"email"]]
+      || ![CLLedger validEmailAddress: [[self business] objectForKey: @"email"]]))
+    return CLFail (error, @"Set valid client and business email addresses before enabling automatic reminders. The business email must be configured in Apple Mail.");
+  if (message == nil || overdue == nil || [message length] > 10000 || [overdue length] > 10000)
+    return CLFail (error, @"Reminder messages must be at most 10000 characters each.");
+  backup = [self backup];
+  [client setObject: [NSNumber numberWithBool: enabled] forKey: @"autoReminders"];
+  [client setObject: [NSNumber numberWithInteger: [value integerValue]] forKey: @"reminderDays"];
+  [client setObject: CLTrim (message) forKey: @"reminderMessage"];
+  [client setObject: CLTrim (overdue) forKey: @"overdueMessage"];
+  return [self commit: backup error: error];
+}
+
+- (NSString *) paymentMessageForInvoice: (NSDictionary *)invoice onDate: (NSString *)date
+{
+  NSDictionary *client = [self clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]] ?: [invoice objectForKey: @"client"];
+  BOOL overdue = ![[invoice objectForKey: @"paid"] boolValue]
+    && ![[invoice objectForKey: @"paymentUnverified"] boolValue]
+    && ![[invoice objectForKey: @"dueDateUnverified"] boolValue]
+    && [[invoice objectForKey: @"dueDate"] compare: date] == NSOrderedAscending;
+  NSString *message = [client objectForKey: overdue ? @"overdueMessage" : @"reminderMessage"];
+  NSDictionary *values;
+  NSEnumerator *keys;
+  NSString *key;
+  if ([[invoice objectForKey: @"paid"] boolValue]) return @"Thank you for your payment. Your paid invoice is attached.";
+  if ([[invoice objectForKey: @"paymentUnverified"] boolValue] || [[invoice objectForKey: @"dueDateUnverified"] boolValue])
+    return @"Please find your invoice attached. Please contact us to confirm the payment details.";
+  if ([CLTrim (message) length] == 0) message = [CLLedger defaultReminderMessage: overdue];
+  values = [NSDictionary dictionaryWithObjectsAndKeys:
+    [client objectForKey: @"name"], @"{client}", [CLLedger invoiceNumber: invoice], @"{invoice}",
+    [invoice objectForKey: @"dueDate"], @"{dueDate}",
+    [NSString stringWithFormat: @"%@ %@", [[invoice objectForKey: @"business"] objectForKey: @"currency"],
+      [CLLedger money: [invoice objectForKey: @"total"]]], @"{total}", nil];
+  keys = [values keyEnumerator];
+  while ((key = [keys nextObject]) != nil)
+    message = [message stringByReplacingOccurrencesOfString: key withString: [values objectForKey: key]];
+  return message;
+}
+
+- (NSString *) reminderStageForInvoice: (NSDictionary *)invoice onDate: (NSString *)date
+{
+  NSDictionary *client = [self clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]];
+  NSDictionary *history = [invoice objectForKey: @"reminders"];
+  NSEnumerator *attempts = [history objectEnumerator];
+  NSDictionary *attempt;
+  NSInteger days;
+  NSString *stage;
+  if (client == nil || ![[client objectForKey: @"autoReminders"] boolValue]
+      || [[invoice objectForKey: @"paid"] boolValue] || [[invoice objectForKey: @"total"] longLongValue] <= 0
+      || [[invoice objectForKey: @"paymentUnverified"] boolValue] || [[invoice objectForKey: @"dueDateUnverified"] boolValue]
+      || !CLValidDate (date) || !CLValidDate ([invoice objectForKey: @"dueDate"])
+      || [[invoice objectForKey: @"date"] compare: date] == NSOrderedDescending
+      || ![CLLedger validEmailAddress: [client objectForKey: @"email"]]
+      || ![CLLedger validEmailAddress: [[self business] objectForKey: @"email"]]) return nil;
+  while ((attempt = [attempts nextObject]) != nil)
+    if (![[attempt objectForKey: @"status"] isEqual: @"submitted"]) return nil;
+  days = CLDaysUntil (date, [invoice objectForKey: @"dueDate"]);
+  stage = days < 0 ? @"overdue" : @"due";
+  if (days > [CLLedger reminderDaysForClient: client] || [history objectForKey: stage] != nil) return nil;
+  return stage;
+}
+
+- (BOOL) beginReminder: (NSString *)identifier stage: (NSString *)stage
+               onDate: (NSString *)date error: (NSString **)error
+{
+  NSMutableDictionary *invoice = [self record: identifier in: @"invoices"];
+  NSMutableDictionary *backup;
+  if (invoice == nil || ![[self reminderStageForInvoice: invoice onDate: date] isEqual: stage])
+    return CLFail (error, @"This invoice is no longer eligible for that reminder.");
+  backup = [self backup];
+  if ([invoice objectForKey: @"reminders"] == nil)
+    [invoice setObject: [NSMutableDictionary dictionary] forKey: @"reminders"];
+  [[invoice objectForKey: @"reminders"] setObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:
+    @"pending", @"status", date, @"date", @"Check Mail before retrying an interrupted send.", @"detail", nil] forKey: stage];
+  return [self commit: backup error: error];
+}
+
+- (BOOL) finishReminder: (NSString *)identifier stage: (NSString *)stage
+             submitted: (BOOL)submitted detail: (NSString *)detail error: (NSString **)error
+{
+  NSMutableDictionary *invoice = [self record: identifier in: @"invoices"];
+  NSMutableDictionary *attempt = [[invoice objectForKey: @"reminders"] objectForKey: stage];
+  NSMutableDictionary *backup;
+  if (attempt == nil) return CLFail (error, @"The reminder attempt no longer exists.");
+  backup = [self backup];
+  [attempt setObject: submitted ? @"submitted" : @"review" forKey: @"status"];
+  [attempt setObject: detail ?: @"" forKey: @"detail"];
+  return [self commit: backup error: error];
+}
+
+- (BOOL) resolveReminder: (NSString *)identifier stage: (NSString *)stage
+              submitted: (BOOL)submitted error: (NSString **)error
+{
+  NSMutableDictionary *invoice = [self record: identifier in: @"invoices"];
+  NSDictionary *attempt = [[invoice objectForKey: @"reminders"] objectForKey: stage];
+  NSMutableDictionary *backup;
+  if (attempt == nil || [[attempt objectForKey: @"status"] isEqual: @"submitted"])
+    return CLFail (error, @"There is no unresolved reminder for this invoice.");
+  if (submitted) return [self finishReminder: identifier stage: stage submitted: YES detail: @"Confirmed by user in Mail." error: error];
+  backup = [self backup];
+  [[invoice objectForKey: @"reminders"] removeObjectForKey: stage];
+  return [self commit: backup error: error];
+}
+
++ (NSString *) reminderStatusForInvoice: (NSDictionary *)invoice
+{
+  NSDictionary *history = [invoice objectForKey: @"reminders"];
+  NSEnumerator *attempts = [history objectEnumerator];
+  NSDictionary *attempt;
+  while ((attempt = [attempts nextObject]) != nil)
+    if (![[attempt objectForKey: @"status"] isEqual: @"submitted"]) return @"Review email";
+  if ([history objectForKey: @"overdue"] != nil) return @"Overdue: submitted";
+  if ([history objectForKey: @"due"] != nil) return @"Reminder: submitted";
+  return @"";
 }
 
 @end

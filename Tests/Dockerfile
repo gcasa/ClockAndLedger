@@ -14,3 +14,8 @@ RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && make -f GNUmakefile && \
     gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
     Tests/TimeEntryTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
     -o /tmp/TimeEntryTests $(gnustep-config --base-libs) && /tmp/TimeEntryTests
+
+RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
+    gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
+    Tests/ReminderTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
+    -o /tmp/ReminderTests $(gnustep-config --base-libs) && /tmp/ReminderTests

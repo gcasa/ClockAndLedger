@@ -189,6 +189,84 @@ main (void)
     [cid release];
   }
 
+  {
+    NSString *numberPath = [directory stringByAppendingPathComponent: @"ClientNumbers.plist"];
+    CLLedger *numbered = [[CLLedger alloc] initWithPath: numberPath error: &error];
+    NSString *first;
+    NSString *second;
+    NSString *deleted;
+    NSArray *invalidStarts = [NSArray arrayWithObjects: @"0", @"-1", @"1.5", @"INV-500", @"2147483646", nil];
+    for (i = 0; i < [invalidStarts count]; i++)
+      Check (![numbered saveClient: nil name: @"First" email: @"" address: @"" rate: @"100" netDays: @"30"
+        startingInvoiceNumber: [invalidStarts objectAtIndex: i] error: &error], @"Reject invalid client starting number");
+    Check ([[numbered clients] count] == 0, @"Invalid start does not add client");
+    Check ([numbered saveClient: nil name: @"First" email: @"" address: @"" rate: @"100" netDays: @"30"
+      startingInvoiceNumber: @"500" error: &error], @"Set client starting number");
+    first = [[[[numbered clients] objectAtIndex: 0] objectForKey: @"id"] copy];
+    Check ([numbered invoiceClient: first hours: @"1" tax: @"0" dueDate: nil error: &error], @"Issue client numbered invoice");
+    Check ([[CLLedger invoiceNumber: [[numbered invoices] lastObject]] isEqual: @"INV-00500"], @"Client begins at requested number");
+    Check ([numbered saveClient: nil name: @"Second" email: @"" address: @"" rate: @"100" netDays: @"15"
+      startingInvoiceNumber: @"500" error: &error], @"Second client has own start");
+    second = [[[[numbered clients] lastObject] objectForKey: @"id"] copy];
+    Check ([numbered invoiceClient: second hours: @"1" tax: @"0" dueDate: nil error: &error], @"Issue second client's invoice");
+    Check ([[CLLedger invoiceNumber: [[numbered invoices] lastObject]] isEqual: @"INV-00501"], @"Skip number used by another client");
+    deleted = [[[[numbered invoices] lastObject] objectForKey: @"id"] copy];
+    Check ([numbered deleteInvoice: deleted error: &error], @"Delete custom numbered invoice");
+    Check (![numbered saveClient: second name: @"Second" email: @"" address: @"" rate: @"100" netDays: @"15"
+      startingInvoiceNumber: @"700" error: &error], @"Starting number remains fixed after deletion");
+    Check ([numbered saveClient: first name: @"Renamed" email: @"" address: @"" rate: @"150" netDays: @"10" error: &error], @"Old save API preserves numbering");
+    [numbered release];
+    numbered = [[CLLedger alloc] initWithPath: numberPath error: &error];
+    Check (numbered != nil, @"Reopen client numbering ledger");
+    Check ([numbered addTimeForClient: first date: [CLLedger today] description: @"Work" hours: @"2" error: &error], @"Add client numbered timesheet");
+    Check ([numbered invoiceClient: first tax: @"0" dueDate: nil error: &error], @"Timesheet uses client numbering");
+    Check ([[CLLedger invoiceNumber: [[numbered invoices] lastObject]] isEqual: @"INV-00502"], @"Continue sequence and skip deleted number");
+    Check ([numbered invoiceClient: second hours: @"1" tax: @"0" dueDate: nil error: &error], @"Second client continues after reopening");
+    Check ([[CLLedger invoiceNumber: [[numbered invoices] lastObject]] isEqual: @"INV-00503"], @"Second client counter survives deletion");
+    [numbered release];
+    numbered = [[CLLedger alloc] initWithPath: numberPath error: &error];
+    Check (numbered != nil, @"Reopen after advancing client counters");
+    Check ([numbered saveClient: nil name: @"Business default" email: @"" address: @"" rate: @"100" netDays: @"30"
+      startingInvoiceNumber: @"" error: &error], @"Blank client start uses business sequence");
+    Check ([numbered invoiceClient: [[[numbered clients] lastObject] objectForKey: @"id"] hours: @"1" tax: @"0" dueDate: nil error: &error], @"Issue with business numbering");
+    Check ([[CLLedger invoiceNumber: [[numbered invoices] lastObject]] isEqual: @"INV-00005"], @"Business sequence remains available");
+    [numbered release];
+    [first release]; [second release]; [deleted release];
+  }
+
+  {
+    NSString *issuedPath = [directory stringByAppendingPathComponent: @"IssuedDates.plist"];
+    CLLedger *dated = [[CLLedger alloc] initWithPath: issuedPath error: &error];
+    NSString *cid;
+    NSDictionary *created;
+    NSArray *invalidDates = [NSArray arrayWithObjects: @"", @"2026-02-30", @"not a date", nil];
+    Check ([dated saveClient: nil name: @"Dated client" email: @"" address: @"" rate: @"100" netDays: @"15" error: &error], @"Create dated invoice client");
+    cid = [[[[dated clients] lastObject] objectForKey: @"id"] copy];
+    for (i = 0; i < [invalidDates count]; i++)
+      Check (![dated invoiceClient: cid task: nil hours: @"1" tax: @"0" issuedDate: [invalidDates objectAtIndex: i] dueDate: nil error: &error], @"Reject invalid issued date");
+    Check (![dated invoiceClient: cid task: nil hours: @"1" tax: @"0" issuedDate: @"2024-02-20" dueDate: @"2024-02-19" error: &error], @"Due date cannot precede issued date");
+    Check ([[dated invoices] count] == 0, @"Invalid dates do not issue invoices");
+    Check ([dated invoiceClient: cid task: nil hours: @"1" tax: @"0" issuedDate: @"2024-02-20" dueDate: nil error: &error], @"Backdate invoice and compute due date");
+    created = [[dated invoices] lastObject];
+    Check ([[created objectForKey: @"date"] isEqual: @"2024-02-20"], @"Invoice stores entered issued date");
+    Check ([[created objectForKey: @"dueDate"] isEqual: @"2024-03-06"], @"Due date uses entered date plus net days across leap day");
+    Check ([[[[created objectForKey: @"lines"] lastObject] objectForKey: @"date"] isEqual: @"2024-02-20"], @"Direct invoice service line uses issued date");
+    Check ([dated invoiceClient: cid task: nil hours: @"1" tax: @"0" issuedDate: @"2099-12-20" dueDate: nil error: &error], @"Allow future issue date");
+    Check ([[[[dated invoices] lastObject] objectForKey: @"dueDate"] isEqual: @"2100-01-04"], @"Future date crosses year boundary");
+    Check ([dated addTimeForClient: cid date: @"2024-01-01" description: @"Recorded work" hours: @"2" error: &error], @"Record time before issue date");
+    Check ([dated invoiceClient: cid task: nil hours: nil tax: @"0" issuedDate: @"2024-02-01" dueDate: nil error: &error], @"Timesheet invoice uses selected issue date");
+    created = [[dated invoices] lastObject];
+    Check ([[created objectForKey: @"date"] isEqual: @"2024-02-01"] && [[created objectForKey: @"dueDate"] isEqual: @"2024-02-16"], @"Timesheet due date uses selected issue date");
+    Check ([[[[created objectForKey: @"lines"] lastObject] objectForKey: @"date"] isEqual: @"2024-01-01"], @"Timesheet work dates remain intact");
+    Check ([dated invoiceClient: cid task: nil hours: @"1" tax: @"0" issuedDate: @"2024-02-01" dueDate: @"2024-02-10" error: &error], @"Manual due override may be historical but after issue date");
+    [dated release];
+    dated = [[CLLedger alloc] initWithPath: issuedPath error: &error];
+    created = [[dated invoices] lastObject];
+    Check (dated != nil && [[created objectForKey: @"date"] isEqual: @"2024-02-01"]
+      && [[created objectForKey: @"dueDate"] isEqual: @"2024-02-10"], @"Issued and overridden due dates persist");
+    [dated release]; [cid release];
+  }
+
   blockedPath = [directory stringByAppendingPathComponent: @"not-a-directory"];
   [@"blocked" writeToFile: blockedPath atomically: YES encoding: NSUTF8StringEncoding error: NULL];
   blocked = [[CLLedger alloc] initWithPath: [blockedPath stringByAppendingPathComponent: @"Ledger.plist"] error: &error];

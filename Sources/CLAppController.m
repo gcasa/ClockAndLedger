@@ -1,6 +1,7 @@
 #import "CLAppController.h"
 #import "CLLedger.h"
 #import "CLInvoiceView.h"
+#import "CLInvoiceMailer.h"
 
 static NSTextField *
 CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
@@ -78,9 +79,19 @@ CLLedgerPath (void)
 {
   [_pulse invalidate];
   [_pulse release];
+  [_reminderPulse invalidate];
+  [_reminderPulse release];
+  [_mailer release];
+  [_mailInvoiceID release];
+  [_mailStage release];
+#ifdef __APPLE__
+  if (_backgroundActivity != nil) [[NSProcessInfo processInfo] endActivity: _backgroundActivity];
+#endif
+  [_backgroundActivity release];
   [_window release];
   [_businessFields release];
   [_businessLogoData release];
+  [_dialogInvoiceClientID release];
   [_ledger release];
   [_lock release];
   [super dealloc];
@@ -172,6 +183,7 @@ CLLedgerPath (void)
   CLButton (view, @"Add Client", NSMakeRect (12, 12, 130, 32), self, @selector(addClient:));
   CLButton (view, @"Edit", NSMakeRect (148, 12, 100, 32), self, @selector(editClient:));
   CLButton (view, @"Delete", NSMakeRect (254, 12, 100, 32), self, @selector(deleteClient:));
+  CLButton (view, @"Email Reminders…", NSMakeRect (368, 12, 190, 32), self, @selector(editClientReminders:));
 
   view = [self tab: @"Client Tasks" in: tabs];
   CLLabel (view, @"Tasks & hourly rates", NSMakeRect (18, 500, 700, 28), 20);
@@ -233,23 +245,35 @@ CLLedgerPath (void)
 
   view = [self tab: @"Invoices" in: tabs];
   CLLabel (view, @"Billing", NSMakeRect (18, 500, 500, 28), 20);
-  CLLabel (view, @"Enter total hours to bill at the client’s hourly rate. Timesheets are optional. Select an invoice below to manage it.", NSMakeRect (18, 472, 940, 22), 12);
-  _invoiceClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 427, 240, 28) pullsDown: NO] autorelease];
+  CLLabel (view, @"Choose a client and task, then enter hours to bill at the task’s current rate.", NSMakeRect (18, 472, 940, 22), 12);
+  _invoiceClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 427, 210, 28) pullsDown: NO] autorelease];
   [view addSubview: _invoiceClient];
   [_invoiceClient setTarget: self];
   [_invoiceClient setAction: @selector(invoiceClientChanged:)];
-  CLLabel (view, @"Tax %", NSMakeRect (272, 430, 50, 22), 12);
-  _taxField = CLField (view, @"0", NSMakeRect (327, 429, 65, 26));
-  CLLabel (view, @"Due date", NSMakeRect (408, 430, 65, 22), 12);
-  _dueField = CLField (view, @"", NSMakeRect (481, 429, 130, 26));
-  CLButton (view, @"Create Invoice", NSMakeRect (629, 424, 170, 34), self, @selector(createInvoice:));
+  CLLabel (view, @"Tax %", NSMakeRect (240, 430, 45, 22), 12);
+  _taxField = CLField (view, @"0", NSMakeRect (285, 429, 55, 26));
+  CLLabel (view, @"Issued", NSMakeRect (355, 430, 50, 22), 12);
+  _issuedField = CLField (view, [CLLedger today], NSMakeRect (410, 429, 115, 26));
+  [_issuedField setDelegate: (id)self];
+  [_issuedField setToolTip: @"YYYY-MM-DD. Changing this date recalculates the due date using the client's net payment days."];
+  CLLabel (view, @"Due date", NSMakeRect (540, 430, 65, 22), 12);
+  _dueField = CLField (view, @"", NSMakeRect (610, 429, 115, 26));
+  CLButton (view, @"Create Invoice", NSMakeRect (750, 424, 195, 34), self, @selector(createInvoice:));
   CLLabel (view, @"Hours", NSMakeRect (18, 389, 55, 24), 12);
   _invoiceHours = CLField (view, @"", NSMakeRect (78, 389, 130, 26));
   _invoiceRate = CLLabel (view, @"", NSMakeRect (225, 389, 650, 24), 12);
+  CLLabel (view, @"Task", NSMakeRect (18, 350, 55, 24), 12);
+  _invoiceTask = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (78, 347, 480, 28) pullsDown: NO] autorelease];
+  [_invoiceTask setTarget: self];
+  [_invoiceTask setAction: @selector(invoiceTaskChanged:)];
+  [view addSubview: _invoiceTask];
+  CLButton (view, @"Review Email…", NSMakeRect (775, 345, 175, 30), self, @selector(reviewReminder:));
+  _mailStatus = CLLabel (view, @"Email opens a draft with a PDF. Automatic reminders are enabled per client.", NSMakeRect (18, 311, 935, 26), 11);
   _invoicesTable = [self tableIn: view
-    columns: [NSArray arrayWithObjects: @"id", @"client", @"date", @"dueDate", @"total", @"status", nil]
-    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 145], [NSNumber numberWithInt: 275], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 110], nil]];
-  [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 315)];
+    columns: [NSArray arrayWithObjects: @"id", @"client", @"date", @"dueDate", @"total", @"status", @"reminder", nil]
+    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 125], [NSNumber numberWithInt: 165], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 175], nil]];
+  [[[_invoicesTable tableColumnWithIdentifier: @"date"] headerCell] setStringValue: @"Issued"];
+  [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 245)];
   [_invoicesTable setDoubleAction: @selector(previewInvoice:)];
   [_invoicesTable setTarget: self];
   CLButton (view, @"Preview", NSMakeRect (12, 12, 120, 32), self, @selector(previewInvoice:));
@@ -274,6 +298,11 @@ CLLedgerPath (void)
       field = CLField (view, [[_ledger business] objectForKey: [keys objectAtIndex: i]], NSMakeRect (190, y, 730, 48));
       if (i == 2 || i == 4)
         [[field cell] setWraps: YES];
+      if ([[labels objectAtIndex: i] isEqual: @"Starting invoice #"])
+        {
+          [[field cell] setPlaceholderString: @"Blank uses business numbering"];
+          [field setToolTip: @"For example, 500 starts at INV-00500. Used numbers are skipped. The starting number is fixed once used."];
+        }
       [_businessFields setObject: field forKey: [keys objectAtIndex: i]];
     }
   CLLabel (view, @"Starting invoice number", NSMakeRect (20, 151, 170, 24), 13);
@@ -311,6 +340,7 @@ CLLedgerPath (void)
     }
   [self refresh];
   _pulse = [[NSTimer scheduledTimerWithTimeInterval: 1 target: self selector: @selector(tick:) userInfo: nil repeats: YES] retain];
+  _reminderPulse = [[NSTimer scheduledTimerWithTimeInterval: 60 target: self selector: @selector(checkReminders:) userInfo: nil repeats: YES] retain];
   [_window center];
   [_window makeKeyAndOrderFront: nil];
   [NSApp activateIgnoringOtherApps: YES];
@@ -410,6 +440,8 @@ CLLedgerPath (void)
       record = [[_ledger invoices] objectAtIndex: row];
       if ([key isEqual: @"id"])
         return [CLLedger invoiceNumber: record];
+      if ([key isEqual: @"reminder"])
+        return [CLLedger reminderStatusForInvoice: record];
       if ([key isEqual: @"dueDate"] && [[record objectForKey: @"dueDateUnverified"] boolValue])
         return @"Not provided";
       if ([key isEqual: @"client"])
@@ -515,32 +547,81 @@ CLLedgerPath (void)
   NSMutableDictionary *fields = [NSMutableDictionary dictionary];
   NSMutableDictionary *result = [NSMutableDictionary dictionary];
   unsigned int i;
-  CGFloat height = 90 + [labels count] * 64;
+  CGFloat height = 90;
+  CGFloat cursor;
+  BOOL reminderForm = [labels containsObject: @"Payment reminder"];
+  for (i = 0; i < [labels count]; i++)
+    height += ([[labels objectAtIndex: i] isEqual: @"Payment reminder"] || [[labels objectAtIndex: i] isEqual: @"Overdue reminder"]) ? 150 : 64;
   _dialog = [[NSPanel alloc] initWithContentRect: NSMakeRect (0, 0, 610, height)
     styleMask: NSTitledWindowMask backing: NSBackingStoreBuffered defer: NO];
   [_dialog setTitle: title];
   [_dialog setReleasedWhenClosed: NO];
+  cursor = height - 70;
   for (i = 0; i < [labels count]; i++)
     {
-      CGFloat y = height - 70 - i * 64;
+      NSString *label = [labels objectAtIndex: i];
+      BOOL message = [label isEqual: @"Payment reminder"] || [label isEqual: @"Overdue reminder"];
+      CGFloat rowHeight = message ? 150 : 64;
+      CGFloat y = cursor - (rowHeight - 64);
+      cursor -= rowHeight;
       NSTextField *field;
       CLLabel ([_dialog contentView], [labels objectAtIndex: i], NSMakeRect (18, y + 10, 157, 24), 13);
+      if ([label isEqual: @"Automatic email"])
+        {
+          NSButton *toggle = [[[NSButton alloc] initWithFrame: NSMakeRect (180, y, 408, 45)] autorelease];
+          [toggle setButtonType: NSSwitchButton];
+          [toggle setTitle: @"Send reminders through Apple Mail"];
+          [toggle setState: [[values objectAtIndex: i] isEqual: @"yes"] ? NSOnState : NSOffState];
+          [[_dialog contentView] addSubview: toggle];
+          [fields setObject: toggle forKey: label];
+          continue;
+        }
+      if (message)
+        {
+          NSScrollView *scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (180, y, 408, rowHeight - 19)] autorelease];
+          NSTextView *text = [[[NSTextView alloc] initWithFrame: NSMakeRect (0, 0, 390, rowHeight - 19)] autorelease];
+          [text setRichText: NO];
+          [text setFont: [NSFont systemFontOfSize: 13]];
+          [text setString: [values objectAtIndex: i]];
+          [text setVerticallyResizable: YES];
+          [text setHorizontallyResizable: NO];
+          [[text textContainer] setWidthTracksTextView: YES];
+          [scroll setBorderType: NSBezelBorder];
+          [scroll setHasVerticalScroller: YES];
+          [scroll setDocumentView: text];
+          [[_dialog contentView] addSubview: scroll];
+          [fields setObject: text forKey: label];
+          continue;
+        }
       field = CLField ([_dialog contentView], [values objectAtIndex: i], NSMakeRect (180, y, 408, 45));
-      [[field cell] setWraps: YES];
+      if ([label isEqual: @"Issued"] && _dialogInvoiceClientID != nil)
+        { _dialogIssuedField = field; [field setDelegate: (id)self]; }
+      if ([label isEqual: @"Due date"] && _dialogInvoiceClientID != nil)
+        _dialogDueField = field;
+            [[field cell] setWraps: YES];
       [fields setObject: field forKey: [labels objectAtIndex: i]];
       if (i == 0)
         [_dialog setInitialFirstResponder: field];
     }
+  if (reminderForm)
+    CLLabel ([_dialog contentView], @"Blank messages use defaults. Fields: {client}, {invoice}, {total}, {dueDate}", NSMakeRect (18, 56, 570, 22), 11);
   [CLButton ([_dialog contentView], @"Cancel", NSMakeRect (366, 16, 106, 32), self, @selector(cancelDialog:)) setKeyEquivalent: @"\033"];
   [CLButton ([_dialog contentView], @"Save", NSMakeRect (480, 16, 106, 32), self, @selector(acceptDialog:)) setKeyEquivalent: @"\r"];
   _dialogAccepted = NO;
   [_dialog center];
   [NSApp runModalForWindow: _dialog];
   for (i = 0; i < [labels count]; i++)
-    [result setObject: [[fields objectForKey: [labels objectAtIndex: i]] stringValue] forKey: [labels objectAtIndex: i]];
+    {
+      id field = [fields objectForKey: [labels objectAtIndex: i]];
+      NSString *value = [field isKindOfClass: [NSButton class]] ? ([field state] == NSOnState ? @"yes" : @"no")
+        : ([field isKindOfClass: [NSTextView class]] ? [field string] : [field stringValue]);
+      [result setObject: value forKey: [labels objectAtIndex: i]];
+    }
   [_dialog orderOut: nil];
   [_dialog release];
   _dialog = nil;
+  _dialogIssuedField = nil;
+  _dialogDueField = nil;
   return _dialogAccepted ? result : nil;
 }
 
@@ -561,23 +642,25 @@ CLLedgerPath (void)
 {
   NSArray *values = client != nil ? [NSArray arrayWithObjects: [client objectForKey: @"name"],
     [client objectForKey: @"email"], [client objectForKey: @"address"], [CLLedger money: [client objectForKey: @"rate"]],
-    [NSString stringWithFormat: @"%ld", (long)[CLLedger netDaysForClient: client]], nil]
-    : [NSArray arrayWithObjects: @"", @"", @"", @"100.00", @"30", nil];
-  NSArray *labels = [NSArray arrayWithObjects: @"Name", @"Email", @"Address", @"Hourly rate", @"Net payment days", nil];
+    [NSString stringWithFormat: @"%ld", (long)[CLLedger netDaysForClient: client]],
+    [client objectForKey: @"startingInvoiceNumber"] ?: @"", nil]
+    : [NSArray arrayWithObjects: @"", @"", @"", @"100.00", @"30", @"", nil];
+  NSArray *labels = [NSArray arrayWithObjects: @"Name", @"Email", @"Address", @"Hourly rate", @"Net payment days", @"Starting invoice #", nil];
   NSDictionary *form;
   while ((form = [self editForm: client != nil ? @"Edit Client" : @"Add Client" labels: labels values: values]) != nil)
     {
       NSString *error = nil;
       if ([_ledger saveClient: [client objectForKey: @"id"] name: [form objectForKey: @"Name"]
         email: [form objectForKey: @"Email"] address: [form objectForKey: @"Address"]
-        rate: [form objectForKey: @"Hourly rate"] netDays: [form objectForKey: @"Net payment days"] error: &error])
+        rate: [form objectForKey: @"Hourly rate"] netDays: [form objectForKey: @"Net payment days"]
+        startingInvoiceNumber: [form objectForKey: @"Starting invoice #"] error: &error])
         {
           [self refresh];
           break;
         }
       [self showError: error];
       values = [NSArray arrayWithObjects: [form objectForKey: @"Name"], [form objectForKey: @"Email"],
-        [form objectForKey: @"Address"], [form objectForKey: @"Hourly rate"], [form objectForKey: @"Net payment days"], nil];
+        [form objectForKey: @"Address"], [form objectForKey: @"Hourly rate"], [form objectForKey: @"Net payment days"], [form objectForKey: @"Starting invoice #"], nil];
     }
 }
 
@@ -687,6 +770,24 @@ CLLedgerPath (void)
 
 - (void) tick: (id)sender
 {
+  if (_mailer != nil && !_mailStarting && ![_mailer isRunning])
+    {
+      NSString *error = nil;
+      BOOL ok = [_mailer succeeded];
+      NSString *detail = ok ? @"Submitted to Apple Mail. Check Mail for delivery or bounce notices." : [_mailer failure];
+      if (_mailInvoiceID != nil)
+        {
+          if (![_ledger finishReminder: _mailInvoiceID stage: _mailStage submitted: ok detail: detail error: &error])
+            { detail = error; ok = NO; }
+          [_invoicesTable reloadData];
+        }
+      [_mailStatus setStringValue: ok ? (_mailInvoiceID != nil ? @"Reminder submitted to Apple Mail with PDF attached." : @"Draft opened in Apple Mail with PDF attached. Review it and send when ready.") : @"Email needs review. Check Mail and use Review Email before retrying."];
+      [_mailStatus setToolTip: detail];
+      if (!ok && _mailInvoiceID == nil) [self showError: detail];
+      [_mailer release]; _mailer = nil;
+      [_mailInvoiceID release]; _mailInvoiceID = nil;
+      [_mailStage release]; _mailStage = nil;
+    }
   NSDictionary *timer = [_ledger timer];
   if (timer == nil)
     [_timerLabel setStringValue: @"No timer running. Choose a client and describe your work, or add manual time below."];
@@ -702,9 +803,11 @@ CLLedgerPath (void)
 - (void) createInvoice: (id)sender
 {
   NSString *error = nil;
-  if (NSRunAlertPanel (@"Issue invoice?", @"Create an invoice for the entered hours at this client’s current hourly rate? Check your business details, tax and due date first.", @"Cancel", @"Create Invoice", nil) != NSAlertAlternateReturn)
+  if ([[_invoiceTask selectedItem] representedObject] == nil)
+    { [self showError: @"Add an active task in Client Tasks and select it before creating an invoice."]; return; }
+  if (NSRunAlertPanel (@"Issue invoice?", @"Create an invoice for the entered hours at the selected task’s current hourly rate? Check your business details, tax, issued date and due date first.", @"Cancel", @"Create Invoice", nil) != NSAlertAlternateReturn)
     return;
-  if ([_ledger invoiceClient: [self selectedClient: _invoiceClient] hours: [_invoiceHours stringValue] tax: [_taxField stringValue] dueDate: [_dueField stringValue] error: &error])
+  if ([_ledger invoiceClient: [self selectedClient: _invoiceClient] task: [[_invoiceTask selectedItem] representedObject] hours: [_invoiceHours stringValue] tax: [_taxField stringValue] issuedDate: [_issuedField stringValue] dueDate: [_dueField stringValue] error: &error])
     {
       [self refresh];
       [_invoiceHours setStringValue: @""];
@@ -718,62 +821,95 @@ CLLedgerPath (void)
 - (void) invoiceClientChanged: (id)sender
 {
   NSDictionary *client = [_ledger clientWithID: [self selectedClient: _invoiceClient]];
-  [_dueField setStringValue: client == nil ? @"" : [_ledger dueDateForClient: [client objectForKey: @"id"] invoiceDate: [CLLedger today]]];
-  [_invoiceRate setStringValue: client == nil ? @"Add a client to start billing." :
-    [NSString stringWithFormat: @"%@ %@ / hour", [[_ledger business] objectForKey: @"currency"],
-      [CLLedger money: [client objectForKey: @"rate"]]]];
+  NSArray *tasks = [_ledger tasksForClient: [client objectForKey: @"id"] includeArchived: NO];
+  NSString *previous = [[[_invoiceTask selectedItem] representedObject] copy];
+  unsigned int i;
+  [_dueField setStringValue: [_ledger dueDateForClient: [client objectForKey: @"id"] invoiceDate: [_issuedField stringValue]] ?: @""];
+  [_invoiceTask removeAllItems];
+  for (i = 0; i < [tasks count]; i++)
+    {
+      NSDictionary *task = [tasks objectAtIndex: i];
+      NSMenuItem *item = [[[NSMenuItem alloc] initWithTitle: [task objectForKey: @"name"] action: NULL keyEquivalent: @""] autorelease];
+      [item setRepresentedObject: [task objectForKey: @"id"]];
+      [[_invoiceTask menu] addItem: item];
+      if ([[task objectForKey: @"id"] isEqual: previous]) [_invoiceTask selectItem: item];
+    }
+  if ([tasks count] == 0) [_invoiceTask addItemWithTitle: @"Add a task in Client Tasks"];
+  [_invoiceTask setEnabled: [tasks count] > 0];
+  [previous release];
+  [self invoiceTaskChanged: nil];
+}
+
+- (void) controlTextDidChange: (NSNotification *)notification
+{
+  if ([notification object] == _issuedField)
+    [_dueField setStringValue: [_ledger dueDateForClient: [self selectedClient: _invoiceClient]
+      invoiceDate: [_issuedField stringValue]] ?: @""];
+  else if ([notification object] == _dialogIssuedField && _dialogInvoiceClientID != nil)
+    [_dialogDueField setStringValue: [_ledger dueDateForClient: _dialogInvoiceClientID
+      invoiceDate: [_dialogIssuedField stringValue]] ?: @""];
+}
+
+- (void) invoiceTaskChanged: (id)sender
+{
+  NSArray *tasks = [_ledger tasksForClient: [self selectedClient: _invoiceClient] includeArchived: NO];
+  unsigned int i;
+  [_invoiceRate setStringValue: @"Choose an active task to set the invoice rate."];
+  for (i = 0; i < [tasks count]; i++)
+    {
+      NSDictionary *task = [tasks objectAtIndex: i];
+      if ([[task objectForKey: @"id"] isEqual: [[_invoiceTask selectedItem] representedObject]])
+        [_invoiceRate setStringValue: [NSString stringWithFormat: @"%@ %@ / hour — %@", [[_ledger business] objectForKey: @"currency"],
+          [CLLedger money: [task objectForKey: @"rate"]], [task objectForKey: @"name"]]];
+    }
 }
 
 - (void) invoiceTimesheet: (id)sender
 {
-  NSArray *labels = [NSArray arrayWithObjects: @"Tax %", @"Due date", nil];
-  NSArray *values = [NSArray arrayWithObjects: [_taxField stringValue],
-    [_ledger dueDateForClient: [self selectedClient: _timeClient] invoiceDate: [CLLedger today]], nil];
+  NSArray *labels = [NSArray arrayWithObjects: @"Tax %", @"Issued", @"Due date", nil];
+  NSArray *values;
   NSDictionary *form;
   NSString *error = nil;
+  NSString *issuedDate = [_issuedField stringValue];
   if ([self selectedClient: _timeClient] == nil)
     { [self showError: @"Select a timesheet client first."]; return; }
+  [_dialogInvoiceClientID release];
+  _dialogInvoiceClientID = [[self selectedClient: _timeClient] copy];
+  values = [NSArray arrayWithObjects: [_taxField stringValue], issuedDate,
+    [_ledger dueDateForClient: _dialogInvoiceClientID invoiceDate: issuedDate] ?: @"", nil];
   while ((form = [self editForm: @"Invoice all unbilled hours at their recorded rates" labels: labels values: values]) != nil)
     {
-      if ([_ledger invoiceClient: [self selectedClient: _timeClient] tax: [form objectForKey: @"Tax %"]
-        dueDate: [form objectForKey: @"Due date"] error: &error])
+      if ([_ledger invoiceClient: _dialogInvoiceClientID task: nil hours: nil tax: [form objectForKey: @"Tax %"]
+        issuedDate: [form objectForKey: @"Issued"] dueDate: [form objectForKey: @"Due date"] error: &error])
         {
           [self refresh];
           [_invoicesTable selectRowIndexes: [NSIndexSet indexSetWithIndex: [[_ledger invoices] count] - 1] byExtendingSelection: NO];
           [self previewInvoice: nil];
-          return;
+          break;
         }
       [self showError: error];
-      values = [NSArray arrayWithObjects: [form objectForKey: @"Tax %"], [form objectForKey: @"Due date"], nil];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Tax %"], [form objectForKey: @"Issued"], [form objectForKey: @"Due date"], nil];
     }
+  [_dialogInvoiceClientID release];
+  _dialogInvoiceClientID = nil;
 }
 
 - (void) emailInvoice: (id)sender
 {
   NSDictionary *invoice = [self selectedRecord: _invoicesTable];
   NSDictionary *client;
-  NSString *email;
-  NSString *subject;
-  NSString *url;
-  NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:
-    @"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
-  CLInvoiceView *view;
-  if (invoice == nil)
-    { [self showError: @"Select an invoice first."]; return; }
-  client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]];
-  email = [(client != nil ? client : [invoice objectForKey: @"client"]) objectForKey: @"email"];
-  if ([email length] == 0 || [email rangeOfString: @"@"].location == NSNotFound
-      || [email rangeOfCharacterFromSet: [NSCharacterSet whitespaceAndNewlineCharacterSet]].location != NSNotFound)
-    { [self showError: @"Add a valid email address in Clients, then email this invoice again."]; return; }
-  view = [[[CLInvoiceView alloc] initWithInvoice: invoice] autorelease];
-  subject = [NSString stringWithFormat: @"Invoice %@ — %@", [CLLedger invoiceNumber: invoice],
-    [[invoice objectForKey: @"business"] objectForKey: @"name"]];
-  url = [NSString stringWithFormat: @"mailto:%@?subject=%@&body=%@",
-    [email stringByAddingPercentEncodingWithAllowedCharacters: allowed],
-    [subject stringByAddingPercentEncodingWithAllowedCharacters: allowed],
-    [[view emailText] stringByAddingPercentEncodingWithAllowedCharacters: allowed]];
-  if (![[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString: url]])
-    [self showError: @"Could not open an email draft. Configure a default email application and try again."];
+  NSString *error = nil;
+  if (invoice == nil) { [self showError: @"Select an invoice first."]; return; }
+  if (_mailer != nil) { [self showError: @"Wait for the current Mail operation to finish."]; return; }
+  client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]] ?: [invoice objectForKey: @"client"];
+  _mailer = [[CLInvoiceMailer alloc] init];
+  _mailStarting = YES;
+  if (![_mailer startInvoice: invoice recipient: [client objectForKey: @"email"]
+      sender: [[_ledger business] objectForKey: @"email"]
+      message: [_ledger paymentMessageForInvoice: invoice onDate: [CLLedger today]] send: NO error: &error])
+    { _mailStarting = NO; [_mailer release]; _mailer = nil; [self showError: error]; return; }
+  _mailStarting = NO;
+  [_mailStatus setStringValue: @"Preparing an Apple Mail draft with the invoice PDF attached…"];
 }
 
 - (void) previewInvoice: (id)sender
@@ -916,11 +1052,19 @@ CLLedgerPath (void)
 
 - (BOOL) applicationShouldTerminateAfterLastWindowClosed: (NSApplication *)application
 {
+  return NO;
+}
+
+- (BOOL) applicationShouldHandleReopen: (NSApplication *)application hasVisibleWindows: (BOOL)visible
+{
+  if (!visible) [_window makeKeyAndOrderFront: nil];
   return YES;
 }
 
 - (void) applicationWillTerminate: (NSNotification *)notification
 {
+  [_reminderPulse invalidate];
+  [_mailer cancel];
   [_pulse invalidate];
   if (_ownsLock)
     {
@@ -1193,4 +1337,120 @@ CLLedgerPath (void)
   if (saved)
     [self refresh];
 }
+
+- (void) editClientReminders: (id)sender
+{
+  NSDictionary *client = [self selectedRecord: _clientsTable];
+  NSArray *labels = [NSArray arrayWithObjects: @"Automatic email", @"Days before due", @"Payment reminder", @"Overdue reminder", nil];
+  NSArray *values;
+  NSDictionary *form;
+  NSString *identifier;
+  if (client == nil) { [self showError: @"Select a client first."]; return; }
+  identifier = [[[client objectForKey: @"id"] copy] autorelease];
+  values = [NSArray arrayWithObjects: [[client objectForKey: @"autoReminders"] boolValue] ? @"yes" : @"no",
+    [NSString stringWithFormat: @"%ld", (long)[CLLedger reminderDaysForClient: client]],
+    [client objectForKey: @"reminderMessage"] ?: @"", [client objectForKey: @"overdueMessage"] ?: @"", nil];
+  while ((form = [self editForm: @"Email reminders — one before due, one when overdue" labels: labels values: values]) != nil)
+    {
+      NSString *error = nil;
+      BOOL enabled = [[form objectForKey: @"Automatic email"] isEqual: @"yes"];
+#ifndef __APPLE__
+      if (enabled) { [self showError: @"Automatic reminders require Apple Mail on macOS."]; return; }
+#endif
+      if ([_ledger saveRemindersForClient: identifier enabled: enabled daysBefore: [form objectForKey: @"Days before due"]
+          message: [form objectForKey: @"Payment reminder"] overdueMessage: [form objectForKey: @"Overdue reminder"] error: &error])
+        {
+          [self refresh];
+          [_mailStatus setStringValue: enabled ? @"Automatic reminders enabled. Keep the app running; closing the window leaves it in the background." : @"Automatic reminders disabled for this client. Custom messages still apply to email drafts."];
+          return;
+        }
+      [self showError: error];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Automatic email"], [form objectForKey: @"Days before due"],
+        [form objectForKey: @"Payment reminder"], [form objectForKey: @"Overdue reminder"], nil];
+    }
+}
+
+- (void) checkReminders: (id)sender
+{
+  NSArray *invoices;
+  unsigned int i;
+#ifdef __APPLE__
+  BOOL enabled = NO;
+  for (i = 0; i < [[_ledger clients] count]; i++)
+    if ([[[[_ledger clients] objectAtIndex: i] objectForKey: @"autoReminders"] boolValue]) enabled = YES;
+  if (enabled && _backgroundActivity == nil)
+    _backgroundActivity = [[[NSProcessInfo processInfo] beginActivityWithOptions: NSActivityUserInitiatedAllowingIdleSystemSleep
+      reason: @"Check scheduled invoice reminders while the app runs in the background"] retain];
+  if (!enabled && _backgroundActivity != nil)
+    { [[NSProcessInfo processInfo] endActivity: _backgroundActivity]; [_backgroundActivity release]; _backgroundActivity = nil; }
+#else
+  return;
+#endif
+  if (_mailer != nil || [NSApp modalWindow] != nil) return;
+  invoices = [_ledger invoices];
+  for (i = 0; i < [invoices count]; i++)
+    {
+      NSDictionary *invoice = [invoices objectAtIndex: i];
+      NSString *stage = [_ledger reminderStageForInvoice: invoice onDate: [CLLedger today]];
+      NSString *error = nil;
+      NSDictionary *client;
+      if (stage == nil) continue;
+      _mailInvoiceID = [[invoice objectForKey: @"id"] copy];
+      _mailStage = [stage copy];
+      if (![_ledger beginReminder: _mailInvoiceID stage: stage onDate: [CLLedger today] error: &error])
+        {
+          [_mailInvoiceID release]; _mailInvoiceID = nil; [_mailStage release]; _mailStage = nil;
+          [_mailStatus setStringValue: @"Could not save the reminder attempt. No email sent."];
+          [_mailStatus setToolTip: error];
+          return;
+        }
+      client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]];
+      _mailer = [[CLInvoiceMailer alloc] init];
+      _mailStarting = YES;
+      if (![_mailer startInvoice: invoice recipient: [client objectForKey: @"email"] sender: [[_ledger business] objectForKey: @"email"]
+          message: [_ledger paymentMessageForInvoice: invoice onDate: [CLLedger today]] send: YES error: &error])
+        {
+          [_ledger finishReminder: _mailInvoiceID stage: stage submitted: NO detail: error error: NULL];
+          [_mailer release]; _mailer = nil;
+          [_mailInvoiceID release]; _mailInvoiceID = nil; [_mailStage release]; _mailStage = nil;
+          [_mailStatus setStringValue: @"Automatic email needs review. Select the invoice and choose Review Email."];
+          [_mailStatus setToolTip: error];
+        }
+      else [_mailStatus setStringValue: @"Submitting an automatic reminder with the invoice PDF to Apple Mail…"];
+      _mailStarting = NO;
+      [_invoicesTable reloadData];
+      return;
+    }
+}
+
+- (void) reviewReminder: (id)sender
+{
+  NSDictionary *invoice = [self selectedRecord: _invoicesTable];
+  NSDictionary *history = [invoice objectForKey: @"reminders"];
+  NSArray *stages = [NSArray arrayWithObjects: @"due", @"overdue", nil];
+  unsigned int i;
+  if (invoice == nil) { [self showError: @"Select an invoice first."]; return; }
+  if ([[invoice objectForKey: @"id"] isEqual: _mailInvoiceID])
+    { [self showError: @"Wait for this Mail operation to finish before reviewing it."]; return; }
+  for (i = 0; i < [stages count]; i++)
+    {
+      NSString *stage = [stages objectAtIndex: i];
+      NSDictionary *attempt = [history objectForKey: stage];
+      NSInteger answer;
+      NSString *error = nil;
+      if (attempt == nil || [[attempt objectForKey: @"status"] isEqual: @"submitted"]) continue;
+      answer = NSRunAlertPanel (@"Review reminder in Apple Mail",
+        @"%@\n\nCheck Drafts, Outbox and Sent for invoice %@. If Mail has it queued or sent, choose Already Submitted. Only choose Retry if you have verified it was not submitted and removed any stale draft. Retrying makes it eligible for the next automatic check.",
+        @"Cancel", @"Already Submitted", @"Retry", [attempt objectForKey: @"detail"], [CLLedger invoiceNumber: invoice]);
+      if (answer != NSAlertDefaultReturn)
+        {
+          [_ledger resolveReminder: [invoice objectForKey: @"id"] stage: stage submitted: answer == NSAlertAlternateReturn error: &error];
+          [self showError: error];
+          [_invoicesTable reloadData];
+        }
+      return;
+    }
+  [self showError: [history count] > 0 ? @"Reminder submission is recorded. Apple Mail handles delivery; check its Outbox and any bounce notices." : @"No automatic reminder has been attempted. Configure Email Reminders for this client in Clients."];
+}
+
 @end

@@ -72,11 +72,20 @@ main (void)
   [info setRightMargin: 30];
   [[info dictionary] setObject: NSPrintSaveJob forKey: NSPrintJobDisposition];
   [[info dictionary] setObject: path forKey: NSPrintSavePath];
-  operation = [NSPrintOperation printOperationWithView: view printInfo: info];
-  [operation setShowsPrintPanel: NO];
-  [operation setShowsProgressPanel: NO];
-  if (![operation runOperation])
-    result = 1;
+  {
+    NSMutableDictionary *settings = [[NSPrintInfo sharedPrintInfo] dictionary];
+    NSDictionary *savedSettings = [[settings copy] autorelease];
+    NSString *exportError = nil;
+    /* A previous print job's page selection must not truncate attachments. */
+    [settings setObject: [NSNumber numberWithBool: NO] forKey: NSPrintAllPages];
+    [settings setObject: [NSNumber numberWithInt: 2] forKey: NSPrintFirstPage];
+    [settings setObject: [NSNumber numberWithInt: 2] forKey: NSPrintLastPage];
+    if (![view writePDFToPath: path error: &exportError])
+      { NSLog (@"Export failed: %@", exportError); result = 1; }
+    [settings setObject: [savedSettings objectForKey: NSPrintAllPages] ?: [NSNumber numberWithBool: YES] forKey: NSPrintAllPages];
+    [settings setObject: [savedSettings objectForKey: NSPrintFirstPage] ?: [NSNumber numberWithInt: 1] forKey: NSPrintFirstPage];
+    [settings setObject: [savedSettings objectForKey: NSPrintLastPage] ?: [NSNumber numberWithUnsignedInteger: pages.length] forKey: NSPrintLastPage];
+  }
   pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: path]];
   if (pdf == nil || [pdf pageCount] != pages.length || pages.length < 2
       || [[pdf string] rangeOfString: @"FINAL PAYMENT INSTRUCTIONS"].location == NSNotFound
@@ -137,6 +146,73 @@ main (void)
       result == 0 ? @"PASS" : @"FAIL");
     [pdf release];
     [view release];
+  }
+  {
+    NSMutableDictionary *termsClient = [NSMutableDictionary dictionaryWithDictionary: client];
+    NSMutableDictionary *termsBusiness = [NSMutableDictionary dictionaryWithDictionary: business];
+    NSArray *days = [NSArray arrayWithObjects: @15, @1, @0, nil];
+    NSArray *expected = [NSArray arrayWithObjects: @"Payment due within 15 days.", @"Payment due within 1 day.", @"Payment due on receipt.", nil];
+    [invoice setObject: termsClient forKey: @"client"];
+    [invoice setObject: termsBusiness forKey: @"business"];
+    for (i = 0; i < [days count]; i++)
+      {
+        NSString *text;
+        [termsClient setObject: [days objectAtIndex: i] forKey: @"netDays"];
+        [termsBusiness setObject: @"Payment due within 30 days.\nPay by bank transfer." forKey: @"notes"];
+        view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+        text = [view emailText];
+        if ([text rangeOfString: [expected objectAtIndex: i]].location == NSNotFound
+            || [text rangeOfString: @"Payment due within 30 days."].location != NSNotFound
+            || [text rangeOfString: @"Pay by bank transfer."].location == NSNotFound)
+          result = 1;
+        [view release];
+      }
+    [termsBusiness setObject: @"Custom instructions" forKey: @"notes"];
+    view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+    if ([[view emailText] rangeOfString: @"Payment due on receipt."].location == NSNotFound
+        || [[view emailText] rangeOfString: @"Custom instructions"].location == NSNotFound)
+      result = 1;
+    [view release];
+    NSLog (@"%@: invoice footer uses saved client terms and preserves custom instructions", result == 0 ? @"PASS" : @"FAIL");
+  }
+  {
+    unsigned int state;
+    [invoice setObject: business forKey: @"business"]; /* No red logo in stamp checks. */
+    for (state = 0; state < 3; state++)
+      {
+        NSString *stampPath = [[[NSFileManager defaultManager] currentDirectoryPath]
+          stringByAppendingPathComponent: [NSString stringWithFormat: @"build/Invoice-stamp-%u.pdf", state]];
+        NSString *exportError = nil;
+        NSUInteger pageIndex;
+        [invoice setObject: [NSNumber numberWithBool: state != 0] forKey: @"paid"];
+        [invoice setObject: [NSNumber numberWithBool: state == 2] forKey: @"paymentUnverified"];
+        view = [[CLInvoiceView alloc] initWithInvoice: invoice];
+        [view knowsPageRange: &pages];
+        if (![view writePDFToPath: stampPath error: &exportError]) result = 1;
+        pdf = [[PDFDocument alloc] initWithURL: [NSURL fileURLWithPath: stampPath]];
+        if (pdf == nil || [pdf pageCount] != pages.length) result = 1;
+        for (pageIndex = 0; pageIndex < [pdf pageCount]; pageIndex++)
+          {
+            NSImage *render = [[pdf pageAtIndex: pageIndex] thumbnailOfSize: NSMakeSize (612, 792) forBox: kPDFDisplayBoxMediaBox];
+            NSBitmapImageRep *bitmap = [NSBitmapImageRep imageRepWithData: [render TIFFRepresentation]];
+            NSInteger x, y;
+            NSUInteger redPixels = 0;
+            for (y = 0; y < [bitmap pixelsHigh]; y++)
+              for (x = 0; x < [bitmap pixelsWide]; x++)
+                {
+                  NSColor *color = [[bitmap colorAtX: x y: y] colorUsingColorSpaceName: NSCalibratedRGBColorSpace];
+                  if ([color redComponent] > [color greenComponent] + 0.12
+                      && [color redComponent] > [color blueComponent] + 0.12) redPixels++;
+                }
+            if ((state == 1 && redPixels < 5000) || (state != 1 && redPixels != 0)) result = 1;
+            if (state == 1 && pageIndex == 0)
+              [[bitmap representationUsingType: NSPNGFileType properties: [NSDictionary dictionary]]
+                writeToFile: @"build/Invoice-paid-stamp.png" atomically: YES];
+          }
+        if ([[pdf string] rangeOfString: @"Service 80"].location == NSNotFound) result = 1;
+        [pdf release]; [view release];
+      }
+    NSLog (@"%@: red stamp on every paid page, absent from unpaid and unverified invoices", result == 0 ? @"PASS" : @"FAIL");
   }
   [pool drain];
   return result;

@@ -9,5 +9,6 @@
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSAppleEventsUsageDescription</key><string>Clock &amp; Ledger uses Apple Mail to prepare invoice emails with PDF attachments and send reminders enabled in client settings.</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
