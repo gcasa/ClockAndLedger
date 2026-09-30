@@ -3,6 +3,7 @@
 #import "CLInvoiceView.h"
 #import "CLInvoiceMailer.h"
 #import "CLDateField.h"
+#import "CLInvoiceEditor.h"
 
 static NSTextField *
 CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
@@ -278,13 +279,14 @@ CLLedgerPath (void)
   [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 245)];
   [_invoicesTable setDoubleAction: @selector(previewInvoice:)];
   [_invoicesTable setTarget: self];
-  CLButton (view, @"Preview", NSMakeRect (12, 12, 120, 32), self, @selector(previewInvoice:));
-  CLButton (view, @"Print…", NSMakeRect (138, 12, 120, 32), self, @selector(printInvoice:));
-  CLButton (view, @"Mark Paid / Unpaid", NSMakeRect (264, 12, 215, 32), self, @selector(togglePaid:));
+  CLButton (view, @"Edit Invoice…", NSMakeRect (12, 12, 130, 32), self, @selector(editInvoice:));
+  CLButton (view, @"Preview", NSMakeRect (148, 12, 90, 32), self, @selector(previewInvoice:));
+  CLButton (view, @"Print…", NSMakeRect (244, 12, 90, 32), self, @selector(printInvoice:));
+  CLButton (view, @"Mark Paid / Unpaid", NSMakeRect (340, 12, 180, 32), self, @selector(togglePaid:));
 
-  CLButton (view, @"Email Invoice…", NSMakeRect (489, 12, 180, 32), self, @selector(emailInvoice:));
+  CLButton (view, @"Email Invoice…", NSMakeRect (526, 12, 180, 32), self, @selector(emailInvoice:));
 
-  CLButton (view, @"Delete Invoice…", NSMakeRect (679, 12, 180, 32), self, @selector(deleteInvoice:));
+  CLButton (view, @"Delete Invoice…", NSMakeRect (712, 12, 180, 32), self, @selector(deleteInvoice:));
 
   view = [self tab: @"Business" in: tabs];
   CLLabel (view, @"Business & payment details", NSMakeRect (18, 496, 800, 28), 20);
@@ -449,7 +451,7 @@ CLLedgerPath (void)
       if ([key isEqual: @"client"])
         return [[record objectForKey: @"client"] objectForKey: @"name"];
       if ([key isEqual: @"total"])
-        return [CLLedger money: [record objectForKey: @"total"]];
+        return [NSString stringWithFormat: @"%@ %@", [[record objectForKey: @"business"] objectForKey: @"currency"], [CLLedger money: [record objectForKey: @"total"]]];
       if ([key isEqual: @"status"])
         {
           if ([[record objectForKey: @"paymentUnverified"] boolValue])
@@ -500,8 +502,12 @@ CLLedgerPath (void)
 {
   unsigned int i;
   long long unbilled = 0;
-  long long outstanding = 0;
-  long long paid = 0;
+  NSMutableDictionary *outstanding = [NSMutableDictionary dictionary];
+  NSMutableDictionary *paid = [NSMutableDictionary dictionary];
+  NSMutableArray *outstandingText = [NSMutableArray array];
+  NSMutableArray *paidText = [NSMutableArray array];
+  NSMutableSet *currencies = [NSMutableSet setWithObject: [[_ledger business] objectForKey: @"currency"]];
+  NSArray *currencyNames;
   NSTextField *startField = [_businessFields objectForKey: @"startingInvoiceNumber"];
   [startField setEnabled: ![_ledger hasIssuedInvoices]];
   if ([_ledger hasIssuedInvoices])
@@ -520,17 +526,31 @@ CLLedgerPath (void)
       NSDictionary *invoice = [[_ledger invoices] objectAtIndex: i];
       if ([[invoice objectForKey: @"paymentUnverified"] boolValue])
         continue;
-      if ([[invoice objectForKey: @"paid"] boolValue])
-        paid += [[invoice objectForKey: @"total"] longLongValue];
-      else
-        outstanding += [[invoice objectForKey: @"total"] longLongValue];
+      {
+        NSString *currency = [[invoice objectForKey: @"business"] objectForKey: @"currency"];
+        NSMutableDictionary *totals = [[invoice objectForKey: @"paid"] boolValue] ? paid : outstanding;
+        NSDecimalNumber *amount = [NSDecimalNumber decimalNumberWithDecimal: [[invoice objectForKey: @"total"] decimalValue]];
+        NSDecimalNumber *previous = [totals objectForKey: currency] ?: [NSDecimalNumber zero];
+        [currencies addObject: currency]; [totals setObject: [previous decimalNumberByAdding: amount] forKey: currency];
+      }
+    }
+  currencyNames = [[currencies allObjects] sortedArrayUsingSelector: @selector(compare:)];
+  for (i = 0; i < [currencyNames count]; i++)
+    {
+      NSString *currency = [currencyNames objectAtIndex: i];
+      NSDecimalNumber *scale = [NSDecimalNumber decimalNumberWithString: @"100"];
+      NSDecimalNumber *owed = [[outstanding objectForKey: currency] ?: [NSDecimalNumber zero] decimalNumberByDividingBy: scale];
+      NSDecimalNumber *received = [[paid objectForKey: currency] ?: [NSDecimalNumber zero] decimalNumberByDividingBy: scale];
+      [outstandingText addObject: [NSString stringWithFormat: @"%@ %@", currency, owed]];
+      [paidText addObject: [NSString stringWithFormat: @"%@ %@", currency, received]];
     }
   [_summaryLabel setStringValue: [NSString stringWithFormat:
     @"%@   •   Unbilled: %@   •   Outstanding: %@   •   Paid: %@   •   %lu clients",
     [[_ledger business] objectForKey: @"currency"],
     [CLLedger money: [NSNumber numberWithLongLong: unbilled]],
-    [CLLedger money: [NSNumber numberWithLongLong: outstanding]],
-    [CLLedger money: [NSNumber numberWithLongLong: paid]], (unsigned long)[[_ledger clients] count]]];
+     [outstandingText componentsJoinedByString: @" / "],
+    [paidText componentsJoinedByString: @" / "], (unsigned long)[[_ledger clients] count]]];
+  [_summaryLabel setToolTip: [_summaryLabel stringValue]];
   [_clientsTable reloadData];
   [_timeTable reloadData];
   [_invoicesTable reloadData];
@@ -805,6 +825,17 @@ CLLedgerPath (void)
     }
 }
 
+- (void) editInvoice: (id)sender
+{
+  NSDictionary *invoice = [self selectedRecord: _invoicesTable];
+  CLInvoiceEditor *editor;
+  if (invoice == nil) { [self showError: @"Select an invoice to edit."]; return; }
+  if (_mailer != nil) { [self showError: @"Wait for the current email operation to finish before editing invoices."]; return; }
+  editor = [[CLInvoiceEditor alloc] initWithLedger: _ledger invoice: invoice];
+  if ([editor run]) [self refresh];
+  [editor release];
+}
+
 - (void) createInvoice: (id)sender
 {
   NSString *error = nil;
@@ -908,11 +939,11 @@ CLLedgerPath (void)
   NSString *error = nil;
   if (invoice == nil) { [self showError: @"Select an invoice first."]; return; }
   if (_mailer != nil) { [self showError: @"Wait for the current Mail operation to finish."]; return; }
-  client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]] ?: [invoice objectForKey: @"client"];
+  client = [_ledger billingClientForInvoice: invoice];
   _mailer = [[CLInvoiceMailer alloc] init];
   _mailStarting = YES;
   if (![_mailer startInvoice: invoice recipient: [client objectForKey: @"email"]
-      sender: [[_ledger business] objectForKey: @"email"]
+      sender: [_ledger senderForInvoice: invoice]
       message: [_ledger paymentMessageForInvoice: invoice onDate: [CLLedger today]] send: NO error: &error])
     { _mailStarting = NO; [_mailer release]; _mailer = nil; [self showError: error]; return; }
   _mailStarting = NO;
@@ -1411,10 +1442,10 @@ CLLedgerPath (void)
           [_mailStatus setToolTip: error];
           return;
         }
-      client = [_ledger clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]];
+      client = [_ledger billingClientForInvoice: invoice];
       _mailer = [[CLInvoiceMailer alloc] init];
       _mailStarting = YES;
-      if (![_mailer startInvoice: invoice recipient: [client objectForKey: @"email"] sender: [[_ledger business] objectForKey: @"email"]
+      if (![_mailer startInvoice: invoice recipient: [client objectForKey: @"email"] sender: [_ledger senderForInvoice: invoice]
           message: [_ledger paymentMessageForInvoice: invoice onDate: [CLLedger today]] send: YES error: &error])
         {
           [_ledger finishReminder: _mailInvoiceID stage: stage submitted: NO detail: error error: NULL];

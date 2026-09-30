@@ -106,7 +106,7 @@ CLDrawPaidStamp (NSRect page)
       if ([[invoice objectForKey: @"taxUnverified"] boolValue])
         CLAppendRows (rows, @"Tax: not itemized in the export (included in imported amount)");
       else
-        CLAppendRows (rows, [NSString stringWithFormat: @"Tax (%@):      %@ %@", [invoice objectForKey: @"sourceNumber"] != nil ? @"imported" : [[invoice objectForKey: @"taxPercent"] stringByAppendingString: @"%"],
+        CLAppendRows (rows, [NSString stringWithFormat: @"Tax (%@):      %@ %@", [[invoice objectForKey: @"taxOverride"] boolValue] ? @"adjusted" : ([invoice objectForKey: @"sourceNumber"] != nil && ![[invoice objectForKey: @"taxEdited"] boolValue] ? @"imported" : [[invoice objectForKey: @"taxPercent"] stringByAppendingString: @"%"]),
         currency, [CLLedger money: [invoice objectForKey: @"tax"]]]);
       CLAppendRows (rows, [NSString stringWithFormat: @"TOTAL:          %@ %@", currency,
         [CLLedger money: [invoice objectForKey: @"total"]]]);

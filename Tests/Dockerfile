@@ -19,3 +19,8 @@ RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
     gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
     Tests/ReminderTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
     -o /tmp/ReminderTests $(gnustep-config --base-libs) && /tmp/ReminderTests
+
+RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
+    gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
+    Tests/InvoiceEditTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
+    -o /tmp/InvoiceEditTests $(gnustep-config --base-libs) && /tmp/InvoiceEditTests

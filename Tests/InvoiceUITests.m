@@ -2,6 +2,7 @@
 #import "CLAppController.h"
 #import "CLLedger.h"
 #import "CLDateField.h"
+#import "CLInvoiceEditor.h"
 
 static unsigned int checks;
 static void Check (BOOL ok, NSString *label)
@@ -150,6 +151,39 @@ static void Check (BOOL ok, NSString *label)
   [self acceptDialog: nil];
 }
 @end
+@interface CLTestInvoiceEditor : CLInvoiceEditor
+- (void) inspectEditor: (NSTimer *)timer;
+- (void) inspectLine: (NSTimer *)timer;
+@end
+@implementation CLTestInvoiceEditor
+- (void) inspectEditor: (NSTimer *)timer
+{
+  NSString *mode = [timer userInfo];
+  Check ([_fields count] == 15, @"Invoice editor exposes invoice, client and business fields");
+  Check ([[_fields objectForKey: @"date"] isKindOfClass: [CLDateField class]]
+    && [[_fields objectForKey: @"dueDate"] isKindOfClass: [CLDateField class]], @"Editor dates support calendar and manual entry");
+  [[_fields objectForKey: @"client_name"] setStringValue: @"Edited in UI"];
+  [[_fields objectForKey: @"date"] setStringValue: @"2024-02-15"];
+  [self controlTextDidChange: [NSNotification notificationWithName: NSControlTextDidChangeNotification object: [_fields objectForKey: @"date"]]];
+  Check ([[[_fields objectForKey: @"dueDate"] stringValue] isEqual: @"2024-03-16"], @"Edited issue date recalculates due from invoice terms");
+  if ([mode isEqual: @"cancel"]) { [self cancel: nil]; return; }
+  {
+    NSTimer *lineTimer = [NSTimer timerWithTimeInterval: 0.1 target: self selector: @selector(inspectLine:) userInfo: nil repeats: NO];
+    [[NSRunLoop currentRunLoop] addTimer: lineTimer forMode: NSModalPanelRunLoopMode];
+    [_table selectRowIndexes: [NSIndexSet indexSetWithIndex: 0] byExtendingSelection: NO];
+    [self editLine: nil];
+  }
+  [self save: nil];
+}
+- (void) inspectLine: (NSTimer *)timer
+{
+  Check ([[_lineFields objectForKey: @"date"] isKindOfClass: [CLDateField class]]
+    && [[_lineFields objectForKey: @"endDate"] isKindOfClass: [CLDateField class]], @"Line service dates have calendar controls");
+  [[_lineFields objectForKey: @"description"] setString: @"Edited services"];
+  [[_lineFields objectForKey: @"hours"] setStringValue: @"2"];
+  [self acceptLine: nil];
+}
+@end
 int main (void)
 {
   NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -184,6 +218,26 @@ int main (void)
   Check ([[form objectForKey: @"Automatic email"] isEqual: @"yes"], @"Checkbox saved as enabled");
   Check ([[form objectForKey: @"Payment reminder"] isEqual: @"Friendly message\nSecond line"], @"Multiline message preserved");
   Check ([[form objectForKey: @"Overdue reminder"] isEqual: @"Please pay promptly."], @"Overdue message saved separately");
+  {
+    CLTestInvoiceEditor *editor;
+    NSTimer *timer;
+    NSDictionary *invoice;
+    [ledger invoiceClient: cid hours: @"1" tax: @"0" dueDate: @"2099-01-01" error: NULL];
+    invoice = [[ledger invoices] lastObject];
+    editor = [[CLTestInvoiceEditor alloc] initWithLedger: ledger invoice: invoice];
+    timer = [NSTimer timerWithTimeInterval: 0.1 target: editor selector: @selector(inspectEditor:) userInfo: @"cancel" repeats: NO];
+    [[NSRunLoop currentRunLoop] addTimer: timer forMode: NSModalPanelRunLoopMode];
+    Check (![editor run], @"Cancel exits editor without saving");
+    Check ([[[invoice objectForKey: @"client"] objectForKey: @"name"] isEqual: @"Client"], @"Cancel does not alter invoice");
+    [editor release];
+    editor = [[CLTestInvoiceEditor alloc] initWithLedger: ledger invoice: invoice];
+    timer = [NSTimer timerWithTimeInterval: 0.1 target: editor selector: @selector(inspectEditor:) userInfo: @"save" repeats: NO];
+    [[NSRunLoop currentRunLoop] addTimer: timer forMode: NSModalPanelRunLoopMode];
+    Check ([editor run], @"Save editor commits changes");
+    Check ([[[invoice objectForKey: @"client"] objectForKey: @"name"] isEqual: @"Edited in UI"], @"Client name edit saved from UI");
+    Check ([[invoice objectForKey: @"total"] intValue] == 199800, @"Edited hours recalculate total through UI");
+    [editor release];
+  }
   [controller release]; [ledger release];
   [[NSFileManager defaultManager] removeItemAtPath: directory error: NULL];
   NSLog (@"PASS: %u invoice/reminder UI checks (no mail sent)", checks);

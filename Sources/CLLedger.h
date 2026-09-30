@@ -122,6 +122,12 @@
 - (BOOL) resolveReminder: (NSString *)identifier stage: (NSString *)stage
               submitted: (BOOL)submitted error: (NSString **)error;
 + (NSString *) reminderStatusForInvoice: (NSDictionary *)invoice;
+/** Editable invoice fields, separate from stable internal IDs and billing links. */
+- (NSDictionary *) editValuesForInvoice: (NSDictionary *)invoice;
+- (BOOL) updateInvoice: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+/** Invoice-specific contact overrides take precedence over current profiles. */
+- (NSDictionary *) billingClientForInvoice: (NSDictionary *)invoice;
+- (NSString *) senderForInvoice: (NSDictionary *)invoice;
 /** Whether any invoice has ever been issued or imported, including deletions. */
 - (BOOL) hasIssuedInvoices;
 /** Permanently delete an invoice, release its linked time for billing, and

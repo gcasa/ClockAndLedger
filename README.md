@@ -127,7 +127,7 @@ time. Data is stored locally in plaintext; backup copies use the same format.
 macOS model tests:
 
 ```sh
-make -f Makefile test test-import test-time test-reminders
+make -f Makefile test test-import test-time test-reminders test-edit
 ```
 
 Native macOS print-pipeline test (writes an 80-entry, multi-page sample PDF
@@ -285,3 +285,29 @@ current day, **Choose** applies it, and **Cancel** keeps the existing text.
 Calendar selections update due dates and timesheet period summaries just like
 manual entry. Dates shown on fixed daily timesheet rows remain tied to the
 selected period.
+
+
+## Editing an invoice
+
+Select an invoice in **Invoices** and click **Edit Invoice…**. The Invoice tab
+edits the displayed number, issue and due dates, tax percentage or tax amount,
+and payment status. Client and Business tabs edit the invoice's name, email,
+address, payment terms, currency, instructions and logo without changing the
+saved profiles. Date fields support typing and calendars. Changing the issue
+date or net days recalculates the due date; an explicit due date remains editable.
+
+In Line Items, add, edit or remove services, including their dates/date range,
+task name, description, hours and rate. Leave Amount override blank to calculate
+hours × rate, or enter a fixed amount. Subtotal and total are recalculated from
+lines and tax. Clear Tax amount override to calculate tax from its percentage.
+Changing currency changes the label, not the amounts; totals are grouped by
+currency in the main summary.
+
+**Cancel** discards the draft. **Save Invoice** persists the edits atomically.
+Invoice numbers must remain unique, and previous numbers stay reserved. The
+internal invoice ID stays stable. Retained timesheet lines stay billed at their
+original recorded time/rate; removing one releases that time for billing again.
+Edited client contact details are used for future invoice emails and reminder
+messages. Sent reminder history is retained to avoid duplicate automatic emails.
+A pending email must finish or be reviewed before the invoice can be edited.
+Previously sent emails and PDFs are unchanged; generate a new copy after editing.

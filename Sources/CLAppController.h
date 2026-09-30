@@ -94,6 +94,7 @@
 - (void) emailInvoice: (id)sender;
 /** Create an invoice from a raw number of hours. */
 - (void) createInvoice: (id)sender;
+- (void) editInvoice: (id)sender;
 /** Display the selected invoice in a printable preview. */
 - (void) previewInvoice: (id)sender;
 /** Print the selected invoice with the system print panel. */

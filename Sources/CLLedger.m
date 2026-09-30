@@ -1,6 +1,7 @@
 #import "CLLedger.h"
 #import "CLQuickBooksImporter.h"
 #include <math.h>
+#include <limits.h>
 
 static BOOL
 CLFail (NSString **error, NSString *message)
@@ -282,6 +283,7 @@ CLValidLedger (id data)
           || !CLValidDate ([invoice objectForKey: @"date"])
           || !CLValidDate ([invoice objectForKey: @"dueDate"])
           || !CLValidReminderHistory ([invoice objectForKey: @"reminders"])
+          || ([invoice objectForKey: @"editedNumber"] != nil && !CLFields (invoice, @"editedNumber", @""))
           || CLDecimal ([invoice objectForKey: @"taxPercent"], 2) == nil
           || [invoiceIDs containsObject: [invoice objectForKey: @"id"]]
           || !CLValidInvoiceID ([invoice objectForKey: @"id"], CLStartingNumber ([data objectForKey: @"business"]), [[data objectForKey: @"nextInvoice"] longLongValue]))
@@ -295,7 +297,11 @@ CLValidLedger (id data)
              && !(CLFields ([lines objectAtIndex: j], @"date,description", @"amount,importedAmount")
                   && [[[lines objectAtIndex: j] objectForKey: @"importedAmount"] boolValue]
                   && CLValidDate ([[lines objectAtIndex: j] objectForKey: @"date"])))
-            || !CLFields ([lines objectAtIndex: j], @"", @"amount"))
+            || !CLFields ([lines objectAtIndex: j], @"", @"amount")
+            || ([[lines objectAtIndex: j] objectForKey: @"serviceEnd"] != nil
+                && (!CLFields ([lines objectAtIndex: j], @"serviceEnd", @"")
+                    || ([[[lines objectAtIndex: j] objectForKey: @"serviceEnd"] length] > 0
+                        && !CLValidDate ([[lines objectAtIndex: j] objectForKey: @"serviceEnd"])))))
           return NO;
     }
   {
@@ -849,7 +855,7 @@ CLValidLedger (id data)
 
 + (NSString *) invoiceNumber: (NSDictionary *)invoice
 {
-  NSString *source = [invoice objectForKey: @"sourceNumber"];
+  NSString *source = [invoice objectForKey: @"editedNumber"] ?: [invoice objectForKey: @"sourceNumber"];
   if ([source length] > 0) return source;
   return [invoice objectForKey: @"displayNumber"] ?: [invoice objectForKey: @"id"];
 }
@@ -1138,6 +1144,8 @@ CLValidLedger (id data)
 
 + (NSString *) dateLabelForEntry: (NSDictionary *)entry
 {
+  if ([[entry objectForKey: @"serviceEnd"] length] > 0 && ![[entry objectForKey: @"serviceEnd"] isEqual: [entry objectForKey: @"date"]])
+    return [NSString stringWithFormat: @"%@ to %@", [entry objectForKey: @"date"], [entry objectForKey: @"serviceEnd"]];
   NSString *end = [entry objectForKey: @"periodEnd"];
   NSString *start = [entry objectForKey: @"date"];
   return end != nil && ![end isEqual: start] ? [NSString stringWithFormat: @"%@ – %@", start, end] : start;
@@ -1388,7 +1396,7 @@ CLValidLedger (id data)
     return @"Please find your invoice attached. Please contact us to confirm the payment details.";
   if ([CLTrim (message) length] == 0) message = [CLLedger defaultReminderMessage: overdue];
   values = [NSDictionary dictionaryWithObjectsAndKeys:
-    [client objectForKey: @"name"], @"{client}", [CLLedger invoiceNumber: invoice], @"{invoice}",
+    [[self billingClientForInvoice: invoice] objectForKey: @"name"], @"{client}", [CLLedger invoiceNumber: invoice], @"{invoice}",
     [invoice objectForKey: @"dueDate"], @"{dueDate}",
     [NSString stringWithFormat: @"%@ %@", [[invoice objectForKey: @"business"] objectForKey: @"currency"],
       [CLLedger money: [invoice objectForKey: @"total"]]], @"{total}", nil];
@@ -1411,8 +1419,8 @@ CLValidLedger (id data)
       || [[invoice objectForKey: @"paymentUnverified"] boolValue] || [[invoice objectForKey: @"dueDateUnverified"] boolValue]
       || !CLValidDate (date) || !CLValidDate ([invoice objectForKey: @"dueDate"])
       || [[invoice objectForKey: @"date"] compare: date] == NSOrderedDescending
-      || ![CLLedger validEmailAddress: [client objectForKey: @"email"]]
-      || ![CLLedger validEmailAddress: [[self business] objectForKey: @"email"]]) return nil;
+      || ![CLLedger validEmailAddress: [[self billingClientForInvoice: invoice] objectForKey: @"email"]]
+      || ![CLLedger validEmailAddress: [self senderForInvoice: invoice]]) return nil;
   while ((attempt = [attempts nextObject]) != nil)
     if (![[attempt objectForKey: @"status"] isEqual: @"submitted"]) return nil;
   days = CLDaysUntil (date, [invoice objectForKey: @"dueDate"]);
@@ -1473,6 +1481,233 @@ CLValidLedger (id data)
   if ([history objectForKey: @"overdue"] != nil) return @"Overdue: submitted";
   if ([history objectForKey: @"due"] != nil) return @"Reminder: submitted";
   return @"";
+}
+
+
+- (NSDictionary *) billingClientForInvoice: (NSDictionary *)invoice
+{
+  if ([[invoice objectForKey: @"clientDetailsEdited"] boolValue]) return [invoice objectForKey: @"client"];
+  return [self clientWithID: [[invoice objectForKey: @"client"] objectForKey: @"id"]] ?: [invoice objectForKey: @"client"];
+}
+
+- (NSString *) senderForInvoice: (NSDictionary *)invoice
+{
+  return [([[invoice objectForKey: @"businessDetailsEdited"] boolValue] ? [invoice objectForKey: @"business"] : [self business]) objectForKey: @"email"];
+}
+
+- (NSDictionary *) editValuesForInvoice: (NSDictionary *)invoice
+{
+  NSMutableDictionary *values = [NSMutableDictionary dictionary];
+  NSMutableArray *lines = [NSMutableArray array];
+  NSDictionary *client = [invoice objectForKey: @"client"];
+  NSDictionary *business = [invoice objectForKey: @"business"];
+  NSArray *keys = [NSArray arrayWithObjects: @"name", @"email", @"address", nil];
+  unsigned int i;
+  [values setObject: [CLLedger invoiceNumber: invoice] forKey: @"number"];
+  [values setObject: [invoice objectForKey: @"date"] forKey: @"date"];
+  [values setObject: [invoice objectForKey: @"dueDate"] forKey: @"dueDate"];
+  [values setObject: [invoice objectForKey: @"taxPercent"] forKey: @"taxPercent"];
+  [values setObject: ([invoice objectForKey: @"sourceNumber"] != nil || [[invoice objectForKey: @"taxOverride"] boolValue])
+    ? [CLLedger money: [invoice objectForKey: @"tax"]] : @"" forKey: @"taxAmount"];
+  [values setObject: [[invoice objectForKey: @"paymentUnverified"] boolValue] ? @"Unverified" : ([[invoice objectForKey: @"paid"] boolValue] ? @"Paid" : @"Unpaid") forKey: @"status"];
+  for (i = 0; i < [keys count]; i++)
+    {
+      NSString *key = [keys objectAtIndex: i];
+      [values setObject: [client objectForKey: key] forKey: [@"client_" stringByAppendingString: key]];
+      [values setObject: [business objectForKey: key] forKey: [@"business_" stringByAppendingString: key]];
+    }
+  [values setObject: [NSString stringWithFormat: @"%ld", (long)[CLLedger netDaysForClient: client]] forKey: @"netDays"];
+  [values setObject: [business objectForKey: @"currency"] forKey: @"currency"];
+  [values setObject: [business objectForKey: @"notes"] forKey: @"notes"];
+  [values setObject: [business objectForKey: @"logoData"] ?: [NSData data] forKey: @"logoData"];
+  for (i = 0; i < [[invoice objectForKey: @"lines"] count]; i++)
+    {
+      NSDictionary *line = [[invoice objectForKey: @"lines"] objectAtIndex: i];
+      BOOL amountOnly = [[line objectForKey: @"importedAmount"] boolValue];
+      [lines addObject: [NSMutableDictionary dictionaryWithObjectsAndKeys:
+        [line objectForKey: @"id"] ?: [NSString stringWithFormat: @"imported-%u", i], @"id",
+        [line objectForKey: @"date"], @"date", [line objectForKey: @"serviceEnd"] ?: [line objectForKey: @"periodEnd"] ?: @"", @"endDate",
+        [line objectForKey: @"taskName"] ?: @"", @"taskName", [line objectForKey: @"description"], @"description",
+        amountOnly ? @"" : ([line objectForKey: @"hours"] ?: [NSString stringWithFormat: @"%.4f", [[line objectForKey: @"seconds"] doubleValue] / 3600.0]), @"hours",
+        amountOnly ? @"" : [CLLedger money: [line objectForKey: @"rate"]], @"rate",
+        amountOnly ? [CLLedger money: [line objectForKey: @"amount"]] : @"", @"amount", nil]];
+    }
+  [values setObject: lines forKey: @"lines"];
+  return values;
+}
+
+- (BOOL) updateInvoice: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error
+{
+  NSMutableDictionary *invoice = [self record: identifier in: @"invoices"];
+  NSDictionary *oldValues;
+  NSMutableDictionary *updated;
+  NSMutableDictionary *client;
+  NSMutableDictionary *business;
+  NSMutableDictionary *backup;
+  NSMutableArray *lines = [NSMutableArray array];
+  NSMutableSet *lineIDs = [NSMutableSet set];
+  NSString *number;
+  NSString *netDays;
+  NSDecimalNumber *percent;
+  NSNumber *tax;
+  long long subtotal = 0;
+  NSArray *keys = [NSArray arrayWithObjects: @"name", @"email", @"address", nil];
+  unsigned int i;
+  NSDecimalNumberHandler *rounding = [NSDecimalNumberHandler decimalNumberHandlerWithRoundingMode: NSRoundPlain
+    scale: 0 raiseOnExactness: NO raiseOnOverflow: YES raiseOnUnderflow: YES raiseOnDivideByZero: YES];
+  if (invoice == nil) return CLFail (error, @"Select an invoice to edit.");
+  if (!CLFields (values, @"number,date,dueDate,taxPercent,taxAmount,status,client_name,client_email,client_address,business_name,business_email,business_address,netDays,currency,notes", @""))
+    return CLFail (error, @"Complete the invoice fields before saving.");
+  if ([[[[invoice objectForKey: @"reminders"] objectForKey: @"due"] objectForKey: @"status"] isEqual: @"pending"]
+      || [[[[invoice objectForKey: @"reminders"] objectForKey: @"overdue"] objectForKey: @"status"] isEqual: @"pending"])
+    return CLFail (error, @"Finish or review the pending email before editing this invoice.");
+  number = CLTrim ([values objectForKey: @"number"]);
+  if ([number length] == 0 || [number length] > 100 || [number rangeOfCharacterFromSet: [NSCharacterSet controlCharacterSet]].location != NSNotFound)
+    return CLFail (error, @"Enter an invoice number of 1 to 100 characters without line breaks.");
+  if (![number isEqual: [CLLedger invoiceNumber: invoice]])
+    {
+      if ([[_data objectForKey: @"reservedInvoiceNumbers"] containsObject: number]
+          || [[_data objectForKey: @"deletedInvoiceIDs"] containsObject: number])
+        return CLFail (error, @"That invoice number has already been used.");
+      for (i = 0; i < [[self invoices] count]; i++)
+        if ([[CLLedger invoiceNumber: [[self invoices] objectAtIndex: i]] isEqual: number])
+          return CLFail (error, @"That invoice number has already been used.");
+    }
+  if (!CLValidDate ([values objectForKey: @"date"]) || !CLValidDate ([values objectForKey: @"dueDate"])
+      || [[values objectForKey: @"dueDate"] compare: [values objectForKey: @"date"]] == NSOrderedAscending)
+    return CLFail (error, @"Enter valid issued and due dates; due must be on or after issued.");
+  percent = CLDecimal ([values objectForKey: @"taxPercent"], 2);
+  if (percent == nil || [percent compare: [NSDecimalNumber decimalNumberWithString: @"100"]] == NSOrderedDescending)
+    return CLFail (error, @"Enter a tax percentage from 0 to 100.");
+  if (![[NSArray arrayWithObjects: @"Paid", @"Unpaid", @"Unverified", nil] containsObject: [values objectForKey: @"status"]])
+    return CLFail (error, @"Choose Paid, Unpaid or Unverified.");
+  netDays = CLTrim ([values objectForKey: @"netDays"]);
+  if ([netDays length] == 0 || [netDays length] > 5 || [netDays integerValue] > 36500
+      || [netDays rangeOfCharacterFromSet: [[NSCharacterSet characterSetWithCharactersInString: @"0123456789"] invertedSet]].location != NSNotFound)
+    return CLFail (error, @"Net payment days must be a whole number from 0 to 36500.");
+  if (![[values objectForKey: @"lines"] isKindOfClass: [NSArray class]] || [[values objectForKey: @"lines"] count] == 0)
+    return CLFail (error, @"Keep at least one invoice line.");
+  oldValues = [self editValuesForInvoice: invoice];
+  updated = [NSMutableDictionary dictionaryWithDictionary: invoice];
+  client = [NSMutableDictionary dictionaryWithDictionary: [invoice objectForKey: @"client"]];
+  business = [NSMutableDictionary dictionaryWithDictionary: [invoice objectForKey: @"business"]];
+  for (i = 0; i < [keys count]; i++)
+    {
+      NSString *key = [keys objectAtIndex: i];
+      [client setObject: [values objectForKey: [@"client_" stringByAppendingString: key]] forKey: key];
+      [business setObject: [values objectForKey: [@"business_" stringByAppendingString: key]] forKey: key];
+    }
+  [client setObject: [NSNumber numberWithInteger: [netDays integerValue]] forKey: @"netDays"];
+  [business setObject: [[values objectForKey: @"currency"] uppercaseString] forKey: @"currency"];
+  [business setObject: [values objectForKey: @"notes"] forKey: @"notes"];
+  if (![[values objectForKey: @"logoData"] isKindOfClass: [NSData class]] || [[values objectForKey: @"logoData"] length] > 5 * 1024 * 1024)
+    return CLFail (error, @"Choose a logo no larger than 5 MB.");
+  [business removeObjectForKey: @"logoData"];
+  if ([[values objectForKey: @"logoData"] length] > 0) [business setObject: [values objectForKey: @"logoData"] forKey: @"logoData"];
+  if (!CLValidClient (client) || !CLValidBusiness (business) || [CLTrim ([client objectForKey: @"name"]) length] == 0
+      || [CLTrim ([business objectForKey: @"name"]) length] == 0
+      || [[business objectForKey: @"currency"] rangeOfCharacterFromSet: [[NSCharacterSet characterSetWithCharactersInString: @"ABCDEFGHIJKLMNOPQRSTUVWXYZ"] invertedSet]].location != NSNotFound)
+    return CLFail (error, @"Enter client and business names and a three-letter currency code.");
+  for (i = 0; i < [[values objectForKey: @"lines"] count]; i++)
+    {
+      NSDictionary *input = [[values objectForKey: @"lines"] objectAtIndex: i];
+      NSDictionary *original = nil, *originalValues = nil;
+      NSMutableDictionary *line;
+      unsigned int j;
+      NSString *lineID;
+      if (!CLFields (input, @"id,date,endDate,taskName,description,hours,rate,amount", @"")
+          || !CLValidDate ([input objectForKey: @"date"]) || ([[input objectForKey: @"endDate"] length] > 0
+          && (!CLValidDate ([input objectForKey: @"endDate"]) || [[input objectForKey: @"endDate"] compare: [input objectForKey: @"date"]] == NSOrderedAscending)))
+        return CLFail (error, @"Enter valid service dates on every line; end date may be blank.");
+      lineID = [input objectForKey: @"id"];
+      if ([lineID length] == 0 || [lineIDs containsObject: lineID]) return CLFail (error, @"Invoice lines need unique identifiers.");
+      [lineIDs addObject: lineID];
+      for (j = 0; j < [[oldValues objectForKey: @"lines"] count]; j++)
+        if ([[[[oldValues objectForKey: @"lines"] objectAtIndex: j] objectForKey: @"id"] isEqual: lineID])
+          { original = [[invoice objectForKey: @"lines"] objectAtIndex: j]; originalValues = [[oldValues objectForKey: @"lines"] objectAtIndex: j]; break; }
+      line = [NSMutableDictionary dictionaryWithDictionary: original ?: [NSDictionary dictionary]];
+      [line setObject: lineID forKey: @"id"];
+      [line setObject: [client objectForKey: @"id"] forKey: @"clientID"];
+      [line setObject: identifier forKey: @"invoiceID"];
+      [line setObject: [input objectForKey: @"date"] forKey: @"date"];
+      [line setObject: [input objectForKey: @"endDate"] forKey: @"serviceEnd"];
+      [line removeObjectForKey: @"periodKind"]; [line removeObjectForKey: @"periodEnd"];
+      [line setObject: [input objectForKey: @"taskName"] forKey: @"taskName"];
+      [line setObject: [input objectForKey: @"description"] forKey: @"description"];
+      if (original == nil || ![[input objectForKey: @"hours"] isEqual: [originalValues objectForKey: @"hours"]]
+          || ![[input objectForKey: @"rate"] isEqual: [originalValues objectForKey: @"rate"]]
+          || ![[input objectForKey: @"amount"] isEqual: [originalValues objectForKey: @"amount"]])
+        {
+          NSNumber *amount = nil;
+          if ([CLTrim ([input objectForKey: @"amount"]) length] > 0)
+            {
+              amount = [CLLedger centsFromString: [input objectForKey: @"amount"]];
+              [line setObject: [NSNumber numberWithBool: YES] forKey: @"importedAmount"];
+              [line removeObjectForKey: @"hours"];
+            }
+          else
+            {
+              NSDecimalNumber *hours = CLDecimal ([input objectForKey: @"hours"], 4);
+              NSNumber *rate = [CLLedger centsFromString: [input objectForKey: @"rate"]];
+              if (hours == nil || [hours compare: [NSDecimalNumber zero]] != NSOrderedDescending
+                  || [hours compare: [NSDecimalNumber decimalNumberWithString: @"8760"]] == NSOrderedDescending || rate == nil)
+                return CLFail (error, @"Each line needs positive hours up to 8760 and a valid rate, or an explicit amount.");
+              amount = [NSNumber numberWithLongLong: [[[hours decimalNumberByMultiplyingBy: [NSDecimalNumber decimalNumberWithDecimal: [rate decimalValue]]]
+                decimalNumberByRoundingAccordingToBehavior: rounding] longLongValue]];
+              [line setObject: [hours stringValue] forKey: @"hours"];
+              [line setObject: rate forKey: @"rate"];
+              [line setObject: [NSNumber numberWithLongLong: MAX (1, [[hours decimalNumberByMultiplyingBy: [NSDecimalNumber decimalNumberWithString: @"3600"]] longLongValue])] forKey: @"seconds"];
+              [line removeObjectForKey: @"importedAmount"];
+            }
+          if (amount == nil) return CLFail (error, @"Enter a valid line amount.");
+          [line setObject: amount forKey: @"amount"];
+        }
+      if ([[line objectForKey: @"taskName"] length] == 0 && [CLTrim ([line objectForKey: @"description"]) length] == 0)
+        return CLFail (error, @"Each line needs a task name or description.");
+      if ([[line objectForKey: @"amount"] longLongValue] > LLONG_MAX - subtotal)
+        return CLFail (error, @"The invoice total is too large.");
+      subtotal += [[line objectForKey: @"amount"] longLongValue];
+      [lines addObject: line];
+    }
+  tax = [CLTrim ([values objectForKey: @"taxAmount"]) length] > 0 ? [CLLedger centsFromString: [values objectForKey: @"taxAmount"]] :
+    [NSNumber numberWithLongLong: [[[[[NSDecimalNumber decimalNumberWithMantissa: subtotal exponent: 0 isNegative: NO]
+      decimalNumberByMultiplyingBy: percent] decimalNumberByDividingBy: [NSDecimalNumber decimalNumberWithString: @"100"]]
+      decimalNumberByRoundingAccordingToBehavior: rounding] longLongValue]];
+  if (tax == nil || [tax longLongValue] > LLONG_MAX - subtotal) return CLFail (error, @"Enter a valid tax amount or leave it blank to calculate from the percentage.");
+  [updated setObject: client forKey: @"client"]; [updated setObject: business forKey: @"business"];
+  for (i = 0; i < [keys count]; i++)
+    if (![[client objectForKey: [keys objectAtIndex: i]] isEqual: [[invoice objectForKey: @"client"] objectForKey: [keys objectAtIndex: i]]])
+      [updated setObject: [NSNumber numberWithBool: YES] forKey: @"clientDetailsEdited"];
+  if (![business isEqual: [invoice objectForKey: @"business"]]) [updated setObject: [NSNumber numberWithBool: YES] forKey: @"businessDetailsEdited"];
+  [updated setObject: number forKey: @"editedNumber"];
+  [updated setObject: [values objectForKey: @"date"] forKey: @"date"];
+  [updated setObject: [values objectForKey: @"dueDate"] forKey: @"dueDate"];
+  [updated setObject: [percent stringValue] forKey: @"taxPercent"];
+  [updated setObject: tax forKey: @"tax"];
+  [updated setObject: [NSNumber numberWithBool: [CLTrim ([values objectForKey: @"taxAmount"]) length] > 0] forKey: @"taxOverride"];
+  if (![[values objectForKey: @"taxAmount"] isEqual: [oldValues objectForKey: @"taxAmount"]]
+      || ![[values objectForKey: @"taxPercent"] isEqual: [oldValues objectForKey: @"taxPercent"]])
+    { [updated removeObjectForKey: @"taxUnverified"]; [updated setObject: [NSNumber numberWithBool: YES] forKey: @"taxEdited"]; }
+  [updated setObject: [NSNumber numberWithLongLong: subtotal] forKey: @"subtotal"];
+  [updated setObject: [NSNumber numberWithLongLong: subtotal + [tax longLongValue]] forKey: @"total"];
+  [updated setObject: lines forKey: @"lines"];
+  [updated setObject: [NSNumber numberWithBool: [[values objectForKey: @"status"] isEqual: @"Paid"]] forKey: @"paid"];
+  if ([[values objectForKey: @"status"] isEqual: @"Unverified"]) [updated setObject: [NSNumber numberWithBool: YES] forKey: @"paymentUnverified"];
+  else [updated removeObjectForKey: @"paymentUnverified"];
+  if (![[values objectForKey: @"dueDate"] isEqual: [invoice objectForKey: @"dueDate"]])
+    [updated removeObjectForKey: @"dueDateUnverified"];
+  backup = [self backup];
+  if ([_data objectForKey: @"reservedInvoiceNumbers"] == nil) [_data setObject: [NSMutableArray array] forKey: @"reservedInvoiceNumbers"];
+  [[_data objectForKey: @"reservedInvoiceNumbers"] addObject: [CLLedger invoiceNumber: invoice]];
+  [[_data objectForKey: @"reservedInvoiceNumbers"] addObject: number];
+  [invoice setDictionary: updated];
+  for (i = 0; i < [[self entries] count]; i++)
+    {
+      NSMutableDictionary *entry = [[self entries] objectAtIndex: i];
+      if ([[entry objectForKey: @"invoiceID"] isEqual: identifier] && ![lineIDs containsObject: [entry objectForKey: @"id"]])
+        [entry setObject: @"" forKey: @"invoiceID"];
+    }
+  return [self commit: backup error: error];
 }
 
 @end
