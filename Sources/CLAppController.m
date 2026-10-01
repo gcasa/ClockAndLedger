@@ -5,7 +5,10 @@
 #import "CLDateField.h"
 #import "CLInvoiceEditor.h"
 
+#import "CLReporting.h"
+#import "CLBrowsing.h"
 #include "CLAppearance.inc"
+#include "CLBrowsing.inc"
 
 static NSTextField *
 CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
@@ -70,6 +73,13 @@ CLLedgerPath (void)
 - (void) showMainWindow: (id)sender;
 #endif
 - (NSArray *) financeRows;
+- (void) buildInsightsIn: (NSTabView *)tabs;
+- (void) refreshInsights: (id)sender;
+- (void) setupBrowsing;
+- (void) browseChanged: (id)sender;
+- (NSDictionary *) browsePeriod: (NSInteger)index;
+- (NSArray *) rawRowsForTable: (NSTableView *)table;
+- (id) valueForRecord: (NSDictionary *)record column: (NSString *)key table: (NSTableView *)table;
 - (void) financeChanged: (id)sender;
 - (void) financeEditRecord: (NSDictionary *)record;
 - (void) editPaymentForInvoice: (NSDictionary *)invoice payment: (NSDictionary *)payment;
@@ -101,6 +111,8 @@ CLLedgerPath (void)
 @implementation CLAppController
 
 #include "CLStatusBar.inc"
+#include "CLInsightsUI.inc"
+#include "CLBrowseUI.inc"
 
 - (void) dealloc
 {
@@ -122,6 +134,9 @@ CLLedgerPath (void)
   if (_backgroundActivity != nil) [[NSProcessInfo processInfo] endActivity: _backgroundActivity];
 #endif
   [_backgroundActivity release];
+  [_dashboardCards release];
+  [_dashboardReport release];
+  [_reportData release];
   [_window release];
   [_businessFields release];
   [_businessLogoData release];
@@ -222,6 +237,8 @@ CLLedgerPath (void)
     [caption setAutoresizingMask: NSViewMinYMargin];
   }
 
+  [self buildInsightsIn: tabs];
+
   view = [self tab: @"Clients" in: tabs];
   CLLabel (view, @"Your clients", NSMakeRect (18, 496, 600, 28), 20);
   CLLabel (view, @"Contact details, hourly rates and net payment days. Use 0 days for payment due on receipt.", NSMakeRect (18, 467, 940, 24), 12);
@@ -300,7 +317,8 @@ CLLedgerPath (void)
   CLButton (view, @"Review Imported Time", NSMakeRect (416, 12, 220, 32), self, @selector(reviewImportedTime:));
 
   _timesheetTotal = CLLabel (view, @"", NSMakeRect (18, 57, 940, 25), 12);
-  CLButton (view, @"Create Invoice…", NSMakeRect (640, 12, 190, 32), self, @selector(invoiceTimesheet:));
+  [CLButton (view, @"Create Invoice…", NSMakeRect (640, 12, 190, 32), self, @selector(invoiceTimesheet:))
+    setToolTip: @"Bills all eligible unbilled time for the client selected above. List search and filters do not limit the invoice."];
 
   view = [self tab: @"Invoices" in: tabs];
   CLLabel (view, @"Billing", NSMakeRect (18, 500, 500, 28), 20);
@@ -402,6 +420,7 @@ CLLedgerPath (void)
   CLButton (view, @"Save Business Details", NSMakeRect (184, 42, 220, 34), self, @selector(saveBusiness:));
   CLButton (view, @"Back Up Ledger…", NSMakeRect (410, 42, 190, 34), self, @selector(backupLedger:));
   CLButton (view, @"Import QuickBooks…", NSMakeRect (606, 42, 210, 34), self, @selector(importQuickBooks:));
+  [self setupBrowsing];
   for (i = 0; i < [[tabs tabViewItems] count]; i++)
     {
       CLNavigationButton *button = [[[CLNavigationButton alloc] initWithFrame: NSMakeRect (12, 570 - i * 50, 172, 44)] autorelease];
@@ -443,6 +462,11 @@ CLLedgerPath (void)
 {
   NSView *view;
   [_workspaceTabs selectTabViewItemAtIndex: [sender tag]];
+  if ([sender tag] < 2) [self refreshInsights: nil];
+  else
+    for (view in [[[_workspaceTabs selectedTabViewItem] view] subviews])
+      if ([view isKindOfClass: [NSScrollView class]] && [[(NSScrollView *)view documentView] isKindOfClass: [CLRecordTable class]])
+        [(NSTableView *)[(NSScrollView *)view documentView] reloadData];
   for (view in [[_window contentView] subviews])
     if ([view isKindOfClass: [CLNavigationButton class]])
       {
@@ -464,7 +488,7 @@ CLLedgerPath (void)
 - (NSTableView *) tableIn: (NSView *)view columns: (NSArray *)columns widths: (NSArray *)widths
 {
   NSScrollView *scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (18, 58, 940, 395)] autorelease];
-  NSTableView *table = [[[NSTableView alloc] initWithFrame: [scroll bounds]] autorelease];
+  NSTableView *table = [[[CLRecordTable alloc] initWithFrame: [scroll bounds]] autorelease];
   unsigned int i;
   [scroll setBorderType: NSLineBorder];
   [scroll setHasVerticalScroller: YES];
@@ -487,6 +511,7 @@ CLLedgerPath (void)
       [[column dataCell] setFont: [NSFont systemFontOfSize: 13]];
       if ([[NSArray arrayWithObjects: @"rate", @"hours", @"amount", @"total", @"netDays", @"paymentDays", nil] containsObject: key])
         [[column dataCell] setAlignment: NSRightTextAlignment];
+      [column setSortDescriptorPrototype: [[[NSSortDescriptor alloc] initWithKey: key ascending: YES] autorelease]];
       [table addTableColumn: column];
     }
   [table setDataSource: (id)self];
@@ -498,24 +523,29 @@ CLLedgerPath (void)
 /** Return the size of the collection represented by a table. */
 - (NSInteger) numberOfRowsInTableView: (NSTableView *)table
 {
-  if (table == _financeTable) return [[self financeRows] count];
-  if (table == _tasksTable)
-    return [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] count];
-  if (table == _clientsTable)
-    return [[_ledger clients] count];
-  if (table == _timeTable)
-    return [[_ledger entries] count];
-  return [[_ledger invoices] count];
+  return [[(CLRecordTable *)table visibleRecords] count];
 }
 
 /** Format a ledger field for its read-only table cell. */
 - (id) tableView: (NSTableView *)table objectValueForTableColumn: (NSTableColumn *)column row: (NSInteger)row
 {
-  NSString *key = [column identifier];
-  NSDictionary *record;
+  NSArray *rows = [(CLRecordTable *)table visibleRecords];
+  if (row < 0 || (NSUInteger)row >= [rows count]) return @"";
+  return [self valueForRecord: [rows objectAtIndex: row] column: [column identifier] table: table];
+}
+
+- (id) valueForRecord: (NSDictionary *)record column: (NSString *)key table: (NSTableView *)table
+{
+  if (table == _reportTable || table == _dashboardTable)
+    {
+      id value = [record objectForKey: key];
+      if ([[NSArray arrayWithObjects: @"received", @"expenses", @"net", @"billed", @"outstanding", @"value", nil] containsObject: key])
+        return [CLLedger money: value ?: [NSNumber numberWithInt: 0]];
+      if ([key hasSuffix: @"Hours"]) return [NSString stringWithFormat: @"%.2f", [value doubleValue]];
+      return value ?: @"";
+    }
   if (table == _financeTable)
     {
-      record = [[self financeRows] objectAtIndex: row];
       if ([_financeMode indexOfSelectedItem] == 0)
         {
           if ([key isEqual: @"amount"]) return [NSString stringWithFormat: @"%@ %@", [record objectForKey: @"currency"], [CLLedger money: [_ledger balanceForAccount: [record objectForKey: @"id"]]]];
@@ -529,7 +559,6 @@ CLLedgerPath (void)
     }
   if (table == _tasksTable)
     {
-      record = [[_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES] objectAtIndex: row];
       if ([key isEqual: @"rate"])
         return [CLLedger money: [record objectForKey: @"rate"]];
       if ([key isEqual: @"status"])
@@ -537,7 +566,6 @@ CLLedgerPath (void)
     }
   else if (table == _clientsTable)
     {
-      record = [[_ledger clients] objectAtIndex: row];
       if ([key isEqual: @"netDays"])
         return [NSNumber numberWithInteger: [CLLedger netDaysForClient: record]];
       if ([key isEqual: @"rate"])
@@ -545,7 +573,6 @@ CLLedgerPath (void)
     }
   else if (table == _timeTable)
     {
-      record = [[_ledger entries] objectAtIndex: row];
       if ([key isEqual: @"date"])
         return [CLLedger dateLabelForEntry: record];
       if ([key isEqual: @"taskName"])
@@ -566,7 +593,6 @@ CLLedgerPath (void)
     }
   else
     {
-      record = [[_ledger invoices] objectAtIndex: row];
       if ([key isEqual: @"id"])
         return [CLLedger invoiceNumber: record];
       if ([key isEqual: @"paymentDays"])
@@ -596,9 +622,7 @@ CLLedgerPath (void)
 - (NSDictionary *) selectedRecord: (NSTableView *)table
 {
   NSInteger row = [table selectedRow];
-  NSArray *records = table == _clientsTable ? [_ledger clients] : (table == _timeTable ? [_ledger entries] : [_ledger invoices]);
-  if (table == _tasksTable)
-    records = [_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES];
+  NSArray *records = [table isKindOfClass: [CLRecordTable class]] ? [(CLRecordTable *)table visibleRecords] : [self rawRowsForTable: table];
   if (row < 0 || (NSUInteger)row >= [records count])
     return nil;
   return [records objectAtIndex: row];
@@ -680,6 +704,7 @@ CLLedgerPath (void)
      [outstandingText componentsJoinedByString: @" / "],
     [paidText componentsJoinedByString: @" / "], (unsigned long)[[_ledger clients] count]]];
   [_summaryLabel setToolTip: [_summaryLabel stringValue]];
+  [self refreshInsights: nil];
   [self financeChanged: nil];
   [_clientsTable reloadData];
   [_timeTable reloadData];
@@ -1074,6 +1099,7 @@ CLLedgerPath (void)
 
 - (void) controlTextDidChange: (NSNotification *)notification
 {
+  [self browseChanged: [notification object]];
   if ([notification object] == _periodDate)
     [self periodChanged: nil];
   else if ([notification object] == _issuedField)

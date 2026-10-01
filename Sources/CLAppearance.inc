@@ -77,3 +77,15 @@ static NSColor *CLAccent (void)
     }
 }
 @end
+
+@interface CLMetricCard : NSView
+@end
+@implementation CLMetricCard
+- (void) drawRect: (NSRect)dirtyRect
+{
+  [[NSColor windowBackgroundColor] setFill];
+  [[NSBezierPath bezierPathWithRoundedRect: NSInsetRect ([self bounds], 1, 1) xRadius: 10 yRadius: 10] fill];
+  [CLAccent () setFill];
+  NSRectFill (NSMakeRect (14, [self bounds].size.height - 17, 24, 3));
+}
+@end

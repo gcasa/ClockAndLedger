@@ -4,6 +4,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnustep-base-runtime && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY . .
+RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
+    gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
+    Tests/ReportingTests.m Sources/CLReporting.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
+    -o /tmp/ReportingTests $(gnustep-config --base-libs) && /tmp/ReportingTests
+
 RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && make -f GNUmakefile && \
     gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
     Tests/LedgerTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -o /tmp/LedgerTests \

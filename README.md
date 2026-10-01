@@ -28,9 +28,9 @@ Source uses GNU C brace/indentation conventions and autogsdoc API comments.
 - Save business/payment details and copy the ledger using **Back Up Ledger**.
 
 This is an initial time-billing application, not a complete accounting suite.
-It does not yet include expenses, bank feeds, payroll, inventory, projects,
-partial payments, credit notes, invoice voiding, or multi-user/cloud sync.
-Issued invoices cannot currently be edited or removed.
+It does not yet include bank feeds, payroll, inventory, projects, credit notes,
+invoice voiding, or multi-user/cloud sync. Expenses, receipts, partial payments,
+invoice editing, search/filtering, dashboards and reports are supported.
 
 ## Build on GNUstep
 
@@ -375,3 +375,65 @@ backups. Account numbers are masked in the list; the ledger and backup files are
 not encrypted by the app. Do not store online banking passwords in these fields.
 
 Run `make -f Makefile test-finance` for bookkeeping regression tests.
+
+
+## Search, filters and sorting
+
+Every Clients, Client Tasks, Timesheets, Invoices and Company Finances list has
+its own search field. Search matches displayed columns and notes, ignoring case
+and accents. Clear the search with its × button. Click a column heading to sort;
+click again to reverse the order. Monetary values and hours sort numerically,
+and dates sort chronologically. Selection follows the same record when sorting
+or refreshing; if a filter hides it, selection is cleared.
+
+- **Client Tasks:** show all, active or archived tasks for the selected client.
+- **Timesheets:** filter by client, unbilled, billed, nonbillable or imported time
+  needing review.
+- **Invoices:** filter by client, outstanding, overdue, paid (including overpaid),
+  partial, overpaid, or records needing payment/due-date review. An overdue partial
+  invoice appears in both relevant filters.
+- **Company Finances:** search each account/expense/payment view; expenses can
+  be filtered by whether a receipt is attached.
+- Time, invoices, expenses and payments support **All dates**, **This month**,
+  **Last month** and **This year**. Dates refer to entry start, invoice issue,
+  expense or payment date. Undated legacy payments appear only under All dates.
+
+List filters affect browsing only. The timesheet entry controls still choose
+where new time is recorded, and **Create Invoice** still bills all of that
+client's eligible unbilled time. List filters do not select invoice line items.
+
+## Dashboard and reports
+
+**Dashboard** opens with this month's money received, expenses, net cash
+movement and current outstanding balance, plus billable/nonbillable hours,
+billed totals, overdue balances, unbilled work and monthly cash activity.
+Choose a period and currency. Currencies are never combined or converted.
+
+**Reports** offers five sortable reports and **Export Report CSV**:
+
+- **Monthly cash flow:** actual recorded receipts, expenses and their difference.
+- **Client billing & receipts:** billed totals including tax by issue date,
+  receipts by payment date, and current outstanding balance per client.
+- **Expense categories:** transaction counts and totals by category.
+- **Time by client:** billable/nonbillable hours and billable value at recorded rates.
+- **Current receivables:** open invoice balances, due dates and overdue status.
+  This is a current view across all dates, so date controls are disabled.
+
+For period reports, enter inclusive From/To dates and click **Apply**. Export
+also applies pending dates and uses the displayed sort order. CSV files include
+currency, date range and calculation notes; spreadsheet formula-like text is
+escaped. Reporting never changes ledger records.
+
+Receipts are grouped by the actual payment date, not the invoice issue date.
+Undated legacy paid invoices and unverified payment states are excluded from
+cash totals and counted in the explanatory note. Unverified payment states are
+also excluded from receivables. Outstanding and overdue use current recorded
+balances, independent of the report period; overpayment credits do not reduce
+other invoices' balances. Unknown due dates are identified for review.
+
+Net cash movement is receipts minus recorded expenses, not accounting profit.
+Opening bank balances are not income. Time is reported in the ledger currency,
+excludes active timers, and assigns a weekly/monthly total wholly to its start
+date rather than guessing how it was distributed across days.
+
+Regression checks: `make -f Makefile test-reports test-browsing`.

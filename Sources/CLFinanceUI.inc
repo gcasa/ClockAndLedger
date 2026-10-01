@@ -23,12 +23,12 @@
   BOOL accounts = [_financeMode indexOfSelectedItem] == 0;
   [[[_financeTable tableColumnWithIdentifier: @"amount"] headerCell] setStringValue: accounts ? @"Current balance" : @"Amount"];
   [[[_financeTable tableColumnWithIdentifier: @"vendor"] headerCell] setStringValue: accounts ? @"Bank" : ([_financeMode indexOfSelectedItem] == 1 ? @"Vendor / payee" : @"Invoice")];
+  if (sender) [_financeTable deselectAll: nil];
   [_financeTable reloadData];
 }
 - (NSDictionary *) financeSelection
 {
-  NSArray *rows = [self financeRows]; NSInteger row = [_financeTable selectedRow];
-  return row >= 0 && (NSUInteger)row < [rows count] ? [rows objectAtIndex: row] : nil;
+  return [self selectedRecord: _financeTable];
 }
 - (void) editPaymentForInvoice: (NSDictionary *)invoice payment: (NSDictionary *)payment
 {
