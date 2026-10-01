@@ -133,6 +133,40 @@ main (void)
   [ledger release];
   ledger = [[CLLedger alloc] initWithPath: path error: &error];
   Check (ledger != nil && [[ledger invoices] count] == 1, @"Period and task invoices reopen");
+  {
+    NSDictionary *lunch;
+    NSString *entryID;
+    NSMutableDictionary *values = [NSMutableDictionary dictionaryWithObjectsAndKeys:
+      @"2026-09-29", @"date", @"day", @"period", @"Lunch break", @"description",
+      @"0.75", @"hours", @"90.00", @"rate", @"No", @"billable", nil];
+    Check ([ledger addTimeRows: [NSArray arrayWithObject:
+      [NSDictionary dictionaryWithObjectsAndKeys: @"2026-09-28", @"date", @"0.5", @"hours", @"Lunch", @"description", nil]]
+      client: clientID task: nil billable: NO error: &error], @"Record nonbillable lunch");
+    lunch = [[ledger entries] lastObject];
+    entryID = [[[lunch objectForKey: @"id"] copy] autorelease];
+    Check (![CLLedger isUnbilledEntry: lunch] && ![CLLedger isBillableEntry: lunch], @"Lunch excluded from billing");
+    Check (![ledger invoiceClient: clientID tax: @"0" dueDate: @"2099-01-01" error: &error], @"Nonbillable-only time cannot be invoiced");
+    Check ([ledger updateTimeEntry: entryID values: values error: &error], @"Edit lunch duration and date");
+    Check ([[lunch objectForKey: @"seconds"] intValue] == 2700 && [[lunch objectForKey: @"date"] isEqual: @"2026-09-29"], @"Edited values applied");
+    before = [NSData dataWithContentsOfFile: path];
+    [values setObject: @"bad" forKey: @"hours"];
+    Check (![ledger updateTimeEntry: entryID values: values error: &error] && [before isEqual: [NSData dataWithContentsOfFile: path]], @"Invalid edit leaves disk unchanged");
+    [values setObject: @"0.75" forKey: @"hours"];
+    Check (![ledger updateTimeEntry: [[[ledger entries] objectAtIndex: 0] objectForKey: @"id"] values: values error: &error], @"Invoiced entry cannot be edited");
+    [ledger release];
+    ledger = [[CLLedger alloc] initWithPath: path error: &error];
+    Check (ledger != nil && ![CLLedger isBillableEntry: [[ledger entries] lastObject]], @"Edited nonbillable time survives restart");
+    [values setObject: @"0.0003" forKey: @"hours"];
+    Check ([ledger updateTimeEntry: entryID values: values error: &error], @"Edit to one second");
+    [values setObject: @"Changed description" forKey: @"description"];
+    Check ([ledger updateTimeEntry: entryID values: values error: &error]
+      && [[[[ledger entries] lastObject] objectForKey: @"seconds"] intValue] == 1, @"Description-only edit preserves exact seconds");
+    [values setObject: @"0.75" forKey: @"hours"];
+    [values setObject: @"Yes" forKey: @"billable"];
+    Check ([ledger updateTimeEntry: entryID values: values error: &error] && [CLLedger isUnbilledEntry: [[ledger entries] lastObject]], @"Edit can restore billability");
+    Check ([ledger invoiceClient: clientID tax: @"0" dueDate: @"2099-01-01" error: &error], @"Edited billable time can be invoiced");
+    Check ([[[[ledger invoices] lastObject] objectForKey: @"total"] intValue] == 6750, @"Invoice uses edited duration and rate");
+  }
   [ledger release];
   {
     NSString *blocked = [directory stringByAppendingPathComponent: @"blocked"];

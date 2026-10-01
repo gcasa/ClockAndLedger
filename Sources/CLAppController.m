@@ -52,6 +52,7 @@ CLLedgerPath (void)
 /** Refresh tables, client choices and financial summary after a mutation. */
 #ifdef __APPLE__
 - (void) setupStatusItem;
+- (void) toggleDockVisibility: (id)sender;
 - (void) updateStatusItem: (id)sender;
 - (void) startStatusTimer: (id)sender;
 - (void) showMainWindow: (id)sender;
@@ -104,6 +105,7 @@ CLLedgerPath (void)
   [_mailer release];
   [_mailInvoiceID release];
   [_mailStage release];
+  [_reminderSnoozes release];
 #ifdef __APPLE__
   if (_backgroundActivity != nil) [[NSProcessInfo processInfo] endActivity: _backgroundActivity];
 #endif
@@ -251,15 +253,23 @@ CLLedgerPath (void)
   _entryMode = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (370, 347, 240, 28) pullsDown: NO] autorelease];
   [_entryMode addItemsWithTitles: [NSArray arrayWithObjects: @"One total for period", @"Daily timesheet", nil]];
   [view addSubview: _entryMode];
+  _nonbillableTime = [[[NSButton alloc] initWithFrame: NSMakeRect (625, 347, 330, 28)] autorelease];
+  [_nonbillableTime setButtonType: NSSwitchButton];
+  [_nonbillableTime setTitle: @"Nonbillable time (lunch, breaks, etc.)"];
+  [_nonbillableTime setToolTip: @"Applies to Add Time and daily timesheets. Timers remain billable; edit a stopped timer entry to change its billability."];
+  [view addSubview: _nonbillableTime];
   _periodLabel = CLLabel (view, @"", NSMakeRect (18, 321, 936, 22), 12);
   _timerLabel = CLLabel (view, @"No timer running", NSMakeRect (18, 292, 936, 25), 12);
   _timeTable = [self tableIn: view
     columns: [NSArray arrayWithObjects: @"date", @"client", @"taskName", @"description", @"hours", @"rate", @"amount", @"billing", nil]
     widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 195], [NSNumber numberWithInt: 120], [NSNumber numberWithInt: 130], [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 65], [NSNumber numberWithInt: 80], [NSNumber numberWithInt: 85], [NSNumber numberWithInt: 150], nil]];
   [[_timeTable enclosingScrollView] setFrame: NSMakeRect (18, 88, 940, 194)];
-  CLButton (view, @"Add Time…", NSMakeRect (12, 12, 170, 32), self, @selector(addTime:));
-  CLButton (view, @"Delete Unbilled Entry", NSMakeRect (186, 12, 210, 32), self, @selector(deleteTime:));
-  CLButton (view, @"Review Imported Time", NSMakeRect (406, 12, 220, 32), self, @selector(reviewImportedTime:));
+  CLButton (view, @"Add Time…", NSMakeRect (12, 12, 135, 32), self, @selector(addTime:));
+  CLButton (view, @"Edit Entry…", NSMakeRect (150, 12, 130, 32), self, @selector(editTime:));
+  [_timeTable setTarget: self];
+  [_timeTable setDoubleAction: @selector(editTime:)];
+  CLButton (view, @"Delete Entry", NSMakeRect (283, 12, 130, 32), self, @selector(deleteTime:));
+  CLButton (view, @"Review Imported Time", NSMakeRect (416, 12, 220, 32), self, @selector(reviewImportedTime:));
 
   _timesheetTotal = CLLabel (view, @"", NSMakeRect (18, 57, 940, 25), 12);
   CLButton (view, @"Create Invoice…", NSMakeRect (640, 12, 190, 32), self, @selector(invoiceTimesheet:));
@@ -289,10 +299,12 @@ CLLedgerPath (void)
   [_invoiceTask setAction: @selector(invoiceTaskChanged:)];
   [view addSubview: _invoiceTask];
   CLButton (view, @"Review Email…", NSMakeRect (775, 345, 175, 30), self, @selector(reviewReminder:));
-  _mailStatus = CLLabel (view, @"Email opens a draft with a PDF. Automatic reminders are enabled per client.", NSMakeRect (18, 311, 935, 26), 11);
+  _mailStatus = CLLabel (view, @"Email opens a draft with a PDF. Scheduled reminders ask before sending.", NSMakeRect (18, 311, 935, 26), 11);
   _invoicesTable = [self tableIn: view
-    columns: [NSArray arrayWithObjects: @"id", @"client", @"date", @"dueDate", @"total", @"status", @"reminder", nil]
-    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 125], [NSNumber numberWithInt: 165], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 175], nil]];
+    columns: [NSArray arrayWithObjects: @"id", @"client", @"date", @"dueDate", @"paymentDays", @"total", @"status", @"reminder", nil]
+    widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 125], [NSNumber numberWithInt: 165], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 105], [NSNumber numberWithInt: 125], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 175], nil]];
+  [[[_invoicesTable tableColumnWithIdentifier: @"paymentDays"] headerCell] setStringValue: @"Days until payment"];
+  [_invoicesTable setToolTip: @"Days until payment: 0 means due today; +n means n days overdue. — means paid or unverified."];
   [[[_invoicesTable tableColumnWithIdentifier: @"date"] headerCell] setStringValue: @"Issued"];
   [[_invoicesTable enclosingScrollView] setFrame: NSMakeRect (18, 58, 940, 245)];
   [_invoicesTable setDoubleAction: @selector(previewInvoice:)];
@@ -483,7 +495,9 @@ CLLedgerPath (void)
       if ([key isEqual: @"hours"])
         return [NSString stringWithFormat: @"%.4f", [[record objectForKey: @"seconds"] doubleValue] / 3600.0];
       if ([key isEqual: @"amount"])
-        return [CLLedger money: [CLLedger amountForSeconds: [record objectForKey: @"seconds"] rate: [record objectForKey: @"rate"]]];
+        return [CLLedger isBillableEntry: record] ? [CLLedger money: [CLLedger amountForSeconds: [record objectForKey: @"seconds"] rate: [record objectForKey: @"rate"]]] : @"0.00";
+      if ([key isEqual: @"billing"] && ![CLLedger isBillableEntry: record])
+        return @"Nonbillable";
       if ([key isEqual: @"billing"])
         return [[record objectForKey: @"invoiceID"] length] > 0 ? [record objectForKey: @"invoiceID"]
           : ([record objectForKey: @"externalBilling"] != nil ? [record objectForKey: @"externalBilling"] : @"Unbilled");
@@ -493,6 +507,8 @@ CLLedgerPath (void)
       record = [[_ledger invoices] objectAtIndex: row];
       if ([key isEqual: @"id"])
         return [CLLedger invoiceNumber: record];
+      if ([key isEqual: @"paymentDays"])
+        return [CLLedger paymentDaysForInvoice: record onDate: [CLLedger today]];
       if ([key isEqual: @"reminder"])
         return [CLLedger reminderStatusForInvoice: record];
       if ([key isEqual: @"dueDate"] && [[record objectForKey: @"dueDateUnverified"] boolValue])
@@ -640,6 +656,20 @@ CLLedgerPath (void)
       cursor -= rowHeight;
       NSTextField *field;
       CLLabel ([_dialog contentView], [labels objectAtIndex: i], NSMakeRect (18, y + 10, 157, 24), 13);
+      if ([label isEqual: @"Period"])
+        {
+          NSPopUpButton *popup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (180, y, 408, 40) pullsDown: NO] autorelease];
+          NSString *kind;
+          for (kind in [NSArray arrayWithObjects: @"day", @"week", @"month", nil])
+            {
+              [popup addItemWithTitle: [kind capitalizedString]];
+              [[popup lastItem] setRepresentedObject: kind];
+              if ([kind isEqual: [values objectAtIndex: i]]) [popup selectItem: [popup lastItem]];
+            }
+          [[_dialog contentView] addSubview: popup];
+          [fields setObject: popup forKey: label];
+          continue;
+        }
       if ([label isEqual: @"Bank account"] || [label isEqual: @"Invoice"])
         {
           BOOL choosingInvoice = [label isEqual: @"Invoice"];
@@ -652,12 +682,12 @@ CLLedgerPath (void)
               if ([[record objectForKey: @"id"] isEqual: [values objectAtIndex: i]]) [popup selectItem: [popup lastItem]]; }
           [[_dialog contentView] addSubview: popup]; [fields setObject: popup forKey: label]; continue;
         }
-      if ([label isEqual: @"Automatic email"])
+      if ([label isEqual: @"Automatic email"] || [label isEqual: @"Billable (Yes / No)"])
         {
           NSButton *toggle = [[[NSButton alloc] initWithFrame: NSMakeRect (180, y, 408, 45)] autorelease];
           [toggle setButtonType: NSSwitchButton];
-          [toggle setTitle: @"Send reminders through Apple Mail"];
-          [toggle setState: [[values objectAtIndex: i] isEqual: @"yes"] ? NSOnState : NSOffState];
+          [toggle setTitle: [label isEqual: @"Automatic email"] ? @"Send reminders through Apple Mail" : @"Include these hours on invoices"];
+          [toggle setState: [[[values objectAtIndex: i] lowercaseString] isEqual: @"yes"] ? NSOnState : NSOffState];
           [[_dialog contentView] addSubview: toggle];
           [fields setObject: toggle forKey: label];
           continue;
@@ -813,15 +843,52 @@ CLLedgerPath (void)
     [period objectForKey: @"start"], [period objectForKey: @"end"]];
   while ((form = [self editForm: title labels: labels values: values]) != nil)
     {
-      if ([_ledger addTimeForClient: clientID task: [[_timeTask selectedItem] representedObject]
-        date: [period objectForKey: @"start"] period: kind
-        description: [form objectForKey: @"Description"] hours: [form objectForKey: @"Total hours"] error: &error])
+      NSDictionary *row = [NSDictionary dictionaryWithObjectsAndKeys:
+        [period objectForKey: @"start"], @"date", [period objectForKey: @"end"], @"periodEnd", kind, @"periodKind",
+        [form objectForKey: @"Description"], @"description", [form objectForKey: @"Total hours"], @"hours", nil];
+      if ([_ledger addTimeRows: [NSArray arrayWithObject: row] client: clientID
+        task: [[_timeTask selectedItem] representedObject] billable: [_nonbillableTime state] != NSOnState error: &error])
         {
           [self refresh];
           break;
         }
       [self showError: error];
       values = [NSArray arrayWithObjects: [form objectForKey: @"Description"], [form objectForKey: @"Total hours"], nil];
+    }
+}
+
+- (void) editTime: (id)sender
+{
+  NSDictionary *entry = [self selectedRecord: _timeTable];
+  NSArray *labels = [NSArray arrayWithObjects: @"Date", @"Period", @"Description", @"Hours", @"Hourly rate", @"Billable (Yes / No)", nil];
+  NSArray *keys = [NSArray arrayWithObjects: @"date", @"period", @"description", @"hours", @"rate", @"billable", nil];
+  NSArray *values;
+  NSDictionary *form;
+  NSString *identifier;
+  if (entry == nil) { [self showError: @"Select a time entry first."]; return; }
+  if ([[entry objectForKey: @"invoiceID"] length] > 0
+      || [[entry objectForKey: @"externalBilling"] isEqual: @"Billed in QuickBooks"])
+    { [self showError: @"Invoiced time is locked and cannot be edited."]; return; }
+  identifier = [[[entry objectForKey: @"id"] copy] autorelease];
+  values = [NSArray arrayWithObjects: [entry objectForKey: @"date"], [entry objectForKey: @"periodKind"] ?: @"day",
+    [entry objectForKey: @"description"], [NSString stringWithFormat: @"%.4f", [[entry objectForKey: @"seconds"] doubleValue] / 3600.0],
+    [CLLedger money: [entry objectForKey: @"rate"]], [CLLedger isBillableEntry: entry] ? @"Yes" : @"No", nil];
+  while ((form = [self editForm: @"Edit Time Entry" labels: labels values: values]) != nil)
+    {
+      NSMutableDictionary *changes = [NSMutableDictionary dictionary];
+      NSMutableArray *retry = [NSMutableArray array];
+      NSString *error = nil;
+      NSUInteger i;
+      for (i = 0; i < [keys count]; i++)
+        {
+          NSString *value = [form objectForKey: [labels objectAtIndex: i]];
+          [changes setObject: value forKey: [keys objectAtIndex: i]];
+          [retry addObject: value];
+        }
+      if ([_ledger updateTimeEntry: identifier values: changes error: &error])
+        { [self refresh]; break; }
+      [self showError: error];
+      values = retry;
     }
 }
 
@@ -1280,7 +1347,7 @@ CLLedgerPath (void)
 - (void) timeClientChanged: (id)sender
 {
   unsigned int i;
-  double total = 0, unbilled = 0;
+  double total = 0, unbilled = 0, nonbillable = 0;
   [self fillTimeTasks];
   for (i = 0; i < [[_ledger entries] count]; i++)
     {
@@ -1288,12 +1355,14 @@ CLLedgerPath (void)
       if ([[entry objectForKey: @"clientID"] isEqual: [self selectedClient: _timeClient]])
         {
           total += [[entry objectForKey: @"seconds"] doubleValue] / 3600.0;
+          if (![CLLedger isBillableEntry: entry])
+            nonbillable += [[entry objectForKey: @"seconds"] doubleValue] / 3600.0;
           if ([CLLedger isUnbilledEntry: entry])
             unbilled += [[entry objectForKey: @"seconds"] doubleValue] / 3600.0;
         }
     }
   [_timesheetTotal setStringValue: [NSString stringWithFormat:
-    @"Selected client: %.4f total hours • %.4f hours ready to invoice (running timer excluded)", total, unbilled]];
+    @"Selected client: %.4f total hours • %.4f nonbillable • %.4f ready to invoice (timer excluded)", total, nonbillable, unbilled]];
 }
 
 - (void) tasksClientChanged: (id)sender
@@ -1421,7 +1490,7 @@ CLLedgerPath (void)
         [rows addObject: [NSDictionary dictionaryWithObjectsAndKeys: [dates objectAtIndex: i], @"date",
           [[fields objectAtIndex: i] stringValue], @"hours", [description stringValue], @"description", nil]];
       saved = [_ledger addTimeRows: rows client: [self selectedClient: _timeClient]
-        task: [[_timeTask selectedItem] representedObject] error: &error];
+        task: [[_timeTask selectedItem] representedObject] billable: [_nonbillableTime state] != NSOnState error: &error];
       if (!saved)
         [self showError: error];
     }
@@ -1455,7 +1524,7 @@ CLLedgerPath (void)
           message: [form objectForKey: @"Payment reminder"] overdueMessage: [form objectForKey: @"Overdue reminder"] error: &error])
         {
           [self refresh];
-          [_mailStatus setStringValue: enabled ? @"Automatic reminders enabled. Keep the app running; closing the window leaves it in the background." : @"Automatic reminders disabled for this client. Custom messages still apply to email drafts."];
+          [_mailStatus setStringValue: enabled ? @"Reminders enabled. Keep the app running; a sound and alert will ask before each send." : @"Automatic reminders disabled for this client. Custom messages still apply to email drafts."];
           return;
         }
       [self showError: error];
@@ -1464,12 +1533,31 @@ CLLedgerPath (void)
     }
 }
 
+- (BOOL) confirmReminderForInvoice: (NSDictionary *)invoice stage: (NSString *)stage
+{
+  NSDictionary *client = [_ledger billingClientForInvoice: invoice];
+  NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+  [alert setMessageText: [stage isEqual: @"overdue"] ? @"Send overdue payment reminder?" : @"Send payment reminder?"];
+  [alert setInformativeText: [NSString stringWithFormat:
+    @"Invoice %@\nTo: %@ <%@>\nDue: %@\n\n%@\n\nThe invoice PDF will be attached.",
+    [CLLedger invoiceNumber: invoice], [client objectForKey: @"name"], [client objectForKey: @"email"],
+    [invoice objectForKey: @"dueDate"], [_ledger paymentMessageForInvoice: invoice onDate: [CLLedger today]]]];
+  [[alert addButtonWithTitle: @"Send Reminder"] setKeyEquivalent: @""];
+  [[alert addButtonWithTitle: @"Remind Me in 1 Hour"] setKeyEquivalent: @"\r"];
+  [NSApp activateIgnoringOtherApps: YES];
+  NSBeep ();
+  return [alert runModal] == NSAlertFirstButtonReturn;
+}
+
 - (void) checkReminders: (id)sender
 {
   NSArray *invoices;
   unsigned int i;
 #ifdef __APPLE__
   BOOL enabled = NO;
+#endif
+  [_invoicesTable reloadData];
+#ifdef __APPLE__
   for (i = 0; i < [[_ledger clients] count]; i++)
     if ([[[[_ledger clients] objectAtIndex: i] objectForKey: @"autoReminders"] boolValue]) enabled = YES;
   if (enabled && _backgroundActivity == nil)
@@ -1480,7 +1568,7 @@ CLLedgerPath (void)
 #else
   return;
 #endif
-  if (_mailer != nil || [NSApp modalWindow] != nil) return;
+  if (_mailer != nil || _reminderPromptActive || [NSApp modalWindow] != nil) return;
   invoices = [_ledger invoices];
   for (i = 0; i < [invoices count]; i++)
     {
@@ -1488,7 +1576,24 @@ CLLedgerPath (void)
       NSString *stage = [_ledger reminderStageForInvoice: invoice onDate: [CLLedger today]];
       NSString *error = nil;
       NSDictionary *client;
+      NSString *snoozeKey;
+      NSDate *snoozedUntil;
+      BOOL approved;
       if (stage == nil) continue;
+      snoozeKey = [NSString stringWithFormat: @"%@:%@", [invoice objectForKey: @"id"], stage];
+      snoozedUntil = [_reminderSnoozes objectForKey: snoozeKey];
+      if (snoozedUntil != nil && [snoozedUntil timeIntervalSinceNow] > 0) continue;
+      _reminderPromptActive = YES;
+      approved = [self confirmReminderForInvoice: invoice stage: stage];
+      _reminderPromptActive = NO;
+      if (!approved)
+        {
+          if (_reminderSnoozes == nil) _reminderSnoozes = [[NSMutableDictionary alloc] init];
+          [_reminderSnoozes setObject: [NSDate dateWithTimeIntervalSinceNow: 3600] forKey: snoozeKey];
+          [_mailStatus setStringValue: @"Reminder postponed for one hour. No email sent."];
+          continue;
+        }
+      [_reminderSnoozes removeObjectForKey: snoozeKey];
       _mailInvoiceID = [[invoice objectForKey: @"id"] copy];
       _mailStage = [stage copy];
       if (![_ledger beginReminder: _mailInvoiceID stage: stage onDate: [CLLedger today] error: &error])

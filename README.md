@@ -11,7 +11,7 @@ Source uses GNU C brace/indentation conventions and autogsdoc API comments.
 - Start/stop one live timer; it survives restarts and includes time while the
   application is closed or the computer sleeps.
 - Enter an individual date, a weekly/monthly total, or daily hours in a weekly
-  or monthly timesheet. View hours and charges and delete unbilled mistakes.
+  or monthly timesheet. Edit uninvoiced entries and record nonbillable lunch or breaks.
 - Define tasks per client with separate hourly rates; edit, archive and restore
   tasks while preserving the rates and names on existing time/invoices.
 - Bill a raw number of hours using an active client task's current rate, with no timesheet required.
@@ -76,6 +76,13 @@ The app is created at `build/ClockAndLedger.app`. It is a local unsigned build.
    optional notes. Start/stop the timer, or choose **Day**, **Week** or **Month**,
    enter a date within that period, choose an entry method and click **Add Time…**.
    **One total for period** creates one entry for the entire range.
+   Check **Nonbillable time (lunch, breaks, etc.)** before **Add Time…** to record
+   manual hours that count toward total time but never appear on invoices. This also
+   applies to every row saved in **Daily timesheet**; timers remain billable.
+   Select an entry and click **Edit Entry…** (or double-click it) to change its date,
+   day/week/month period, description, hours, hourly rate, or billability. Its client
+   and task stay attached. Already invoiced entries are locked. Editing imported
+   time also explicitly reviews its rate and billability.
    **Daily timesheet** opens a row for every date; enter decimal hours
    (`1.5` means 1 hour 30 minutes) and leave unused days blank or zero.
    A description is required when using the client default rate.
@@ -230,13 +237,20 @@ support `{client}`, `{invoice}`, `{total}`, and `{dueDate}`. These current clien
 settings also control the message above the invoice in manually opened drafts.
 Paid invoices use a thank-you message instead of a payment demand.
 
-Turn on **Send reminders through Apple Mail** to enable unattended delivery for
-that client. This is off by default. Set valid client and business email
+Turn on **Send reminders through Apple Mail** to enable scheduled reminders for
+that client. Before each send, the app plays the system alert sound and asks for
+approval, showing the recipient and message. Choose **Send Reminder** to send or
+**Remind Me in 1 Hour** to postpone without sending. Postponements last for the
+current app session; restarting may ask again. This is off by default. Set valid client and business email
 addresses first, and configure the business address in an enabled Apple Mail
 account. On first use, allow the app to control Mail in macOS Automation
 permissions. No email passwords are stored in the ledger.
 
-While running, the app checks once per minute and submits at most one friendly
+The invoice list shows **Days until payment**: days remaining, **0** on the due
+date, and **+n** for n days overdue. Paid, zero-balance, and unverified invoices
+show an em dash. The count refreshes every minute.
+
+While running, the app checks once per minute and, with approval, submits at most one friendly
 reminder per invoice within the configured window, then one separate overdue
 reminder after its due date. If the app first sees an invoice when it is already
 late, only the overdue reminder is sent. Both include the complete invoice PDF.
@@ -252,7 +266,12 @@ records the elapsed time in Timesheets. Only one timer can run at a time, shared
 with the main window, and archived tasks are excluded from the menu.
 
 Choose **Open Clock & Ledger** from the menu, or click its Dock icon, to reopen
-the window. A running timer persists across app restarts and includes elapsed
+the window. Choose **Hide Dock Icon** in the menu bar menu to keep the app out
+of the Dock and Command-Tab switcher; **Show Dock Icon** restores it. This setting
+is remembered across launches. You can still open the window and control timers
+from the menu bar while the Dock icon is hidden.
+
+A running timer persists across app restarts and includes elapsed
 sleep/closed-app time until explicitly stopped. Run `make -f Makefile test-status`
 for the menu bar regression checks.
 

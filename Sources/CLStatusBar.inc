@@ -18,9 +18,14 @@
   [menu addItem: [NSMenuItem separatorItem]];
   item = [menu addItemWithTitle: @"Open Clock & Ledger" action: @selector(showMainWindow:) keyEquivalent: @""];
   [item setTarget: self];
+  _statusDock = [menu addItemWithTitle: @"Hide Dock Icon" action: @selector(toggleDockVisibility:) keyEquivalent: @""];
+  [_statusDock setTarget: self];
   item = [menu addItemWithTitle: @"Quit Clock & Ledger" action: @selector(terminate:) keyEquivalent: @""];
   [item setTarget: NSApp];
   [_statusItem setMenu: menu];
+  /* Install the menu bar access point before hiding the Dock icon. */
+  [NSApp setActivationPolicy: [[NSUserDefaults standardUserDefaults] boolForKey: @"HideDockIcon"]
+    ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
   /* Keep elapsed time updating while menus or modal editors are open. */
   _statusPulse = [[NSTimer timerWithTimeInterval: 1 target: self selector: @selector(updateStatusItem:) userInfo: nil repeats: YES] retain];
   [[NSRunLoop mainRunLoop] addTimer: _statusPulse forMode: NSRunLoopCommonModes];
@@ -42,6 +47,8 @@
   [[_statusItem button] setTitle: title];
   [[_statusItem button] setToolTip: [NSString stringWithFormat: @"Clock & Ledger: %@", summary]];
   [_statusSummary setTitle: summary];
+  [_statusDock setTitle: [NSApp activationPolicy] == NSApplicationActivationPolicyAccessory
+    ? @"Show Dock Icon" : @"Hide Dock Icon"];
   [_statusStart setEnabled: !running && [[_ledger clients] count] > 0 && [NSApp modalWindow] == nil];
   [_statusStop setEnabled: running && [NSApp modalWindow] == nil];
 }
@@ -98,6 +105,16 @@
       [self showError: error];
     }
   [self refresh];
+}
+
+- (void) toggleDockVisibility: (id)sender
+{
+  BOOL hide = [NSApp activationPolicy] != NSApplicationActivationPolicyAccessory;
+  if ([NSApp setActivationPolicy: hide ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular])
+    [[NSUserDefaults standardUserDefaults] setBool: hide forKey: @"HideDockIcon"];
+  else
+    [self showError: @"Could not change Dock visibility. Please try again."];
+  [self updateStatusItem: nil];
 }
 
 - (void) showMainWindow: (id)sender

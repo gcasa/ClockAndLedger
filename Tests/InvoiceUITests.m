@@ -44,6 +44,38 @@ static void Check (BOOL ok, NSString *label)
     }
   return self;
 }
+- (void) inspectTimeForm: (NSTimer *)timer
+{
+  NSView *view;
+  BOOL foundPeriod = NO, foundBilling = NO, foundDate = NO;
+  for (view in [[[NSApp modalWindow] contentView] subviews])
+    {
+      if ([view isKindOfClass: [CLDateField class]]) foundDate = YES;
+      if ([view isKindOfClass: [NSPopUpButton class]])
+        {
+          NSPopUpButton *popup = (NSPopUpButton *)view;
+          Check ([[[popup selectedItem] representedObject] isEqual: @"week"], @"Entry editor preserves period selection");
+          [popup selectItemAtIndex: 2]; foundPeriod = YES;
+        }
+      if ([view isKindOfClass: [NSButton class]] && [[(NSButton *)view title] isEqual: @"Include these hours on invoices"])
+        {
+          Check ([(NSButton *)view state] == NSOnState, @"Entry editor initializes billability checkbox");
+          [(NSButton *)view setState: NSOffState]; foundBilling = YES;
+        }
+    }
+  Check (foundDate && foundPeriod && foundBilling, @"Entry editor has calendar, period menu and billability checkbox");
+  [self acceptDialog: nil];
+}
+- (void) verifyTimeForm
+{
+  NSTimer *timer = [NSTimer timerWithTimeInterval: 0.1 target: self selector: @selector(inspectTimeForm:) userInfo: nil repeats: NO];
+  NSDictionary *form;
+  [[NSRunLoop currentRunLoop] addTimer: timer forMode: NSModalPanelRunLoopMode];
+  form = [self editForm: @"Edit Time Entry"
+    labels: [NSArray arrayWithObjects: @"Date", @"Period", @"Description", @"Hours", @"Hourly rate", @"Billable (Yes / No)", nil]
+    values: [NSArray arrayWithObjects: @"2026-09-28", @"week", @"Lunch", @"0.5", @"90.00", @"Yes", nil]];
+  Check ([[form objectForKey: @"Period"] isEqual: @"month"] && [[form objectForKey: @"Billable (Yes / No)"] isEqual: @"no"], @"Time form saves chosen period and nonbillability");
+}
 - (void) pickDate: (NSString *)date inField: (CLDateField *)field
 {
   NSTimer *timer = [NSTimer timerWithTimeInterval: 0.1 target: self selector: @selector(inspectCalendar:)
@@ -226,6 +258,7 @@ int main (void)
   other = [[[ledger clients] lastObject] objectForKey: @"id"];
   [ledger saveTask: nil client: other name: @"Other client task" rate: @"1" error: NULL];
   controller = [[CLTestController alloc] initWithLedger: ledger];
+  [controller verifyTimeForm];
   [controller verifyFinanceForm];
   [controller verifyTasks];
   [controller verifyCalendar];

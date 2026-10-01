@@ -11,6 +11,7 @@ static void Check (BOOL ok, NSString *message)
 
 @interface CLAppController (StatusTests)
 - (void) setupStatusItem;
+- (void) toggleDockVisibility: (id)sender;
 - (void) updateStatusItem: (id)sender;
 - (void) menuNeedsUpdate: (NSMenu *)menu;
 - (void) startStatusTimer: (id)sender;
@@ -68,6 +69,9 @@ int main (void)
   NSString *clientID;
   NSMenu *menu, *taskMenu;
   NSMenuItem *start;
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  id previousDockPreference = [[defaults objectForKey: @"HideDockIcon"] retain];
+  [defaults removeObjectForKey: @"HideDockIcon"];
   [NSApplication sharedApplication];
   ledger = [[CLLedger alloc] initWithPath: path error: NULL];
   Check (ledger != nil, @"Temporary ledger opens");
@@ -92,6 +96,16 @@ int main (void)
   Check ([[[ledger timer] objectForKey: @"rate"] intValue] == 9000, @"Menu timer snapshots task rate");
   Check (![controller windowVisible], @"Starting task keeps main window closed");
   [controller verifyRunning: YES];
+  Check ([NSApp activationPolicy] == NSApplicationActivationPolicyRegular, @"Dock icon shown by default");
+  [controller toggleDockVisibility: nil];
+  Check ([NSApp activationPolicy] == NSApplicationActivationPolicyAccessory, @"Hide switches to accessory app");
+  Check ([defaults boolForKey: @"HideDockIcon"], @"Hide preference saved");
+  Check ([menu itemWithTitle: @"Show Dock Icon"] != nil, @"Menu offers restoring Dock icon");
+  [controller showMainWindow: nil];
+  Check ([controller windowVisible] && [NSApp activationPolicy] == NSApplicationActivationPolicyAccessory,
+    @"Window can reopen while Dock icon stays hidden");
+  [controller closeWindow];
+  [controller verifyRunning: YES];
   reopened = [[CLLedger alloc] initWithPath: path error: NULL];
   Check ([reopened timer] != nil, @"Menu timer persists across restart");
   [reopened release];
@@ -108,6 +122,18 @@ int main (void)
   [controller applicationWillTerminate: nil];
   [controller closeWindow];
   [controller release];
+  [NSApp setActivationPolicy: NSApplicationActivationPolicyRegular];
+  controller = [[CLStatusTestController alloc] initWithLedger: ledger];
+  Check ([NSApp activationPolicy] == NSApplicationActivationPolicyAccessory, @"New controller restores saved hidden preference");
+  [controller toggleDockVisibility: nil];
+  Check ([NSApp activationPolicy] == NSApplicationActivationPolicyRegular, @"Show restores regular app");
+  Check (![defaults boolForKey: @"HideDockIcon"], @"Show preference saved");
+  Check ([[controller statusMenu] itemWithTitle: @"Hide Dock Icon"] != nil, @"Menu offers hiding again");
+  [controller applicationWillTerminate: nil];
+  [controller release];
+  if (previousDockPreference != nil) [defaults setObject: previousDockPreference forKey: @"HideDockIcon"];
+  else [defaults removeObjectForKey: @"HideDockIcon"];
+  [previousDockPreference release];
   [ledger release];
   [[NSFileManager defaultManager] removeItemAtPath: directory error: NULL];
   NSLog (@"PASS: %u menu bar checks", checks);

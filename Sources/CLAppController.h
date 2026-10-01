@@ -16,6 +16,7 @@
   NSPopUpButton *_timeTask;
   NSPopUpButton *_periodChoice;
   NSPopUpButton *_entryMode;
+  NSButton *_nonbillableTime;
   NSTextField *_periodDate;
   NSTextField *_periodLabel;
   NSTableView *_invoicesTable;
@@ -42,12 +43,15 @@
   NSMenuItem *_statusSummary;
   NSMenuItem *_statusStart;
   NSMenuItem *_statusStop;
+  NSMenuItem *_statusDock;
   NSTimer *_statusPulse;
 #endif
   NSTimer *_pulse;
   NSTimer *_reminderPulse;
   CLInvoiceMailer *_mailer;
   BOOL _mailStarting;
+  BOOL _reminderPromptActive;
+  NSMutableDictionary *_reminderSnoozes;
   NSString *_mailInvoiceID;
   NSString *_mailStage;
   NSTextField *_mailStatus;
@@ -85,6 +89,8 @@
 - (void) addTime: (id)sender;
 /** Delete selected unbilled time after confirmation. */
 - (void) deleteTime: (id)sender;
+/** Edit the selected uninvoiced time entry. */
+- (void) editTime: (id)sender;
 /** Start timing the selected client and description. */
 - (void) startTimer: (id)sender;
 /** Stop and record the current timer. */

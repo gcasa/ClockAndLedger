@@ -76,3 +76,9 @@ test-status:
 	mkdir -p build
 	$(CC) $(CFLAGS) Tests/StatusBarTests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/StatusBarTests
 	./build/StatusBarTests
+
+.PHONY: test-reminder-ui
+test-reminder-ui:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/ReminderUITests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/ReminderUITests
+	./build/ReminderUITests

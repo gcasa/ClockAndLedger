@@ -31,6 +31,22 @@ int main (void)
   Check ([ledger invoiceClient: cid task: taskID hours: @"2.5" tax: @"0" dueDate: @"2099-04-01" error: &error], @"Bill a task directly");
   invoice = [[ledger invoices] lastObject];
   invoiceID = [[invoice objectForKey: @"id"] copy];
+  Check ([[CLLedger paymentDaysForInvoice: invoice onDate: @"2099-03-29"] isEqual: @"3"], @"Countdown across month boundary");
+  Check ([[CLLedger paymentDaysForInvoice: invoice onDate: @"2099-04-01"] isEqual: @"0"], @"Due today");
+  Check ([[CLLedger paymentDaysForInvoice: invoice onDate: @"2099-04-03"] isEqual: @"+2"], @"Overdue uses plus sign");
+  {
+    NSMutableDictionary *sample = [NSMutableDictionary dictionaryWithDictionary: invoice];
+    [sample setObject: @"2024-03-01" forKey: @"dueDate"];
+    Check ([[CLLedger paymentDaysForInvoice: sample onDate: @"2024-02-28"] isEqual: @"2"], @"Leap day counted");
+    [sample setObject: @"2026-03-09" forKey: @"dueDate"];
+    Check ([[CLLedger paymentDaysForInvoice: sample onDate: @"2026-03-07"] isEqual: @"2"], @"DST does not change calendar days");
+    [sample setObject: [NSNumber numberWithBool: YES] forKey: @"paid"];
+    Check ([[CLLedger paymentDaysForInvoice: sample onDate: @"2026-03-07"] isEqual: @"—"], @"Paid invoice has no countdown");
+    [sample setObject: [NSNumber numberWithBool: NO] forKey: @"paid"];
+    [sample setObject: [NSNumber numberWithBool: YES] forKey: @"dueDateUnverified"];
+    Check ([[CLLedger paymentDaysForInvoice: sample onDate: @"2026-03-07"] isEqual: @"—"], @"Unverified due date has no countdown");
+  }
+
   Check ([[invoice objectForKey: @"subtotal"] intValue] == 43875, @"Task rate determines amount, not client rate");
   Check ([[[[invoice objectForKey: @"lines"] lastObject] objectForKey: @"taskName"] isEqual: @"Consulting"], @"Task name is on invoice");
   Check ([[ledger entries] count] == 0, @"Direct task billing does not create time entries");

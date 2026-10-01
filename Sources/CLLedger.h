@@ -72,6 +72,14 @@
  * hours are skipped; invalid rows abort the whole save. Task rates are snapshots. */
 - (BOOL) addTimeRows: (NSArray *)rows client: (NSString *)identifier
                task: (NSString *)taskID error: (NSString **)error;
+/** Add rows with explicit billability; nonbillable hours are never invoiced. */
+- (BOOL) addTimeRows: (NSArray *)rows client: (NSString *)identifier
+               task: (NSString *)taskID billable: (BOOL)billable error: (NSString **)error;
+/** Edit uninvoiced time, preserving client/task identity and snapshot metadata.
+ * Values: date, period (day/week/month), description, hours, rate, billable (Yes/No).
+ * Unchanged displayed hours preserve the original duration to the second. */
+- (BOOL) updateTimeEntry: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
++ (BOOL) isBillableEntry: (NSDictionary *)entry;
 /** Start a timer with the selected task name and rate captured immediately. */
 - (BOOL) startTimerForClient: (NSString *)identifier task: (NSString *)taskID
                description: (NSString *)description error: (NSString **)error;
@@ -162,6 +170,8 @@
 + (NSString *) money: (NSNumber *)cents;
 /** Return today's local calendar date. */
 + (NSString *) today;
+/** Days remaining, +days overdue, or an em dash when payment timing is unavailable. */
++ (NSString *) paymentDaysForInvoice: (NSDictionary *)invoice onDate: (NSString *)date;
 /** Calculate a line amount, rounded half up to cents. */
 + (NSNumber *) amountForSeconds: (NSNumber *)seconds rate: (NSNumber *)rate;
 - (NSArray *) accounts;

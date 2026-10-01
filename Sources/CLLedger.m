@@ -167,7 +167,10 @@ CLValidEntry (id record)
           || [hours compare: [NSDecimalNumber decimalNumberWithString: @"8760"]] == NSOrderedDescending)
         return NO;
     }
-  return CLFields (record, @"id,clientID,date,description,invoiceID", @"seconds,rate")
+  return [record isKindOfClass: [NSDictionary class]]
+    && ([record objectForKey: @"billable"] == nil
+      || (CLFields (record, @"", @"billable") && [[record objectForKey: @"billable"] longLongValue] <= 1))
+    && CLFields (record, @"id,clientID,date,description,invoiceID", @"seconds,rate")
     && [[record objectForKey: @"id"] length] > 0
     && CLValidDate ([record objectForKey: @"date"])
     && [[record objectForKey: @"seconds"] longLongValue] > 0
@@ -623,6 +626,54 @@ CLValidLedger (id data)
     description: description hours: hours error: error];
 }
 
+- (BOOL) updateTimeEntry: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error
+{
+  NSMutableDictionary *entry = [self record: identifier in: @"entries"];
+  NSMutableDictionary *updated, *backup;
+  NSDictionary *period;
+  NSDecimalNumber *hours;
+  NSNumber *rate;
+  NSString *billing;
+  long long seconds;
+  if (entry == nil) return CLFail (error, @"Select a time entry first.");
+  if ([[entry objectForKey: @"invoiceID"] length] > 0
+      || [[entry objectForKey: @"externalBilling"] isEqual: @"Billed in QuickBooks"])
+    return CLFail (error, @"Invoiced time is locked and cannot be edited.");
+  if (!CLFields (values, @"date,period,description,hours,rate,billable", @""))
+    return CLFail (error, @"Complete all time entry fields.");
+  period = [CLLedger periodContainingDate: [values objectForKey: @"date"]
+    kind: [CLTrim ([values objectForKey: @"period"]) lowercaseString] error: error];
+  if (period == nil) return NO;
+  hours = CLDecimal ([values objectForKey: @"hours"], 4);
+  rate = [CLLedger centsFromString: [values objectForKey: @"rate"]];
+  billing = [CLTrim ([values objectForKey: @"billable"]) lowercaseString];
+  if (hours == nil || [hours compare: [NSDecimalNumber zero]] != NSOrderedDescending
+      || [hours compare: [NSDecimalNumber decimalNumberWithString: @"8760"]] == NSOrderedDescending
+      || rate == nil || [CLTrim ([values objectForKey: @"description"]) length] == 0
+      || (![billing isEqual: @"yes"] && ![billing isEqual: @"no"]))
+    return CLFail (error, @"Enter a description, positive hours up to 8760 (four decimal places), a valid rate, and Yes or No for billable.");
+  seconds = [[hours decimalNumberByMultiplyingBy: [NSDecimalNumber decimalNumberWithString: @"3600"]] longLongValue];
+  if ([[values objectForKey: @"hours"] isEqual: [NSString stringWithFormat: @"%.4f", [[entry objectForKey: @"seconds"] doubleValue] / 3600.0]])
+    seconds = [[entry objectForKey: @"seconds"] longLongValue];
+  if (seconds < 1) return CLFail (error, @"Enter at least one second of time.");
+  updated = [NSMutableDictionary dictionaryWithDictionary: entry];
+  [updated setObject: [period objectForKey: @"start"] forKey: @"date"];
+  [updated setObject: [period objectForKey: @"end"] forKey: @"periodEnd"];
+  [updated setObject: [CLTrim ([values objectForKey: @"period"]) lowercaseString] forKey: @"periodKind"];
+  [updated setObject: CLTrim ([values objectForKey: @"description"]) forKey: @"description"];
+  [updated setObject: [NSNumber numberWithLongLong: seconds] forKey: @"seconds"];
+  [updated removeObjectForKey: @"hours"];
+  [updated setObject: rate forKey: @"rate"];
+  [updated setObject: [NSNumber numberWithBool: [billing isEqual: @"yes"]] forKey: @"billable"];
+  /* Editing imported time also explicitly reviews its rate and billability. */
+  if ([updated objectForKey: @"externalBilling"] != nil)
+    [updated setObject: [billing isEqual: @"yes"] ? @"Billable" : @"Not billable" forKey: @"externalBilling"];
+  if (!CLValidEntry (updated)) return CLFail (error, @"Invalid time entry.");
+  backup = [self backup];
+  [entry setDictionary: updated];
+  return [self commit: backup error: error];
+}
+
 - (BOOL) deleteEntry: (NSString *)identifier error: (NSString **)error
 {
   NSDictionary *entry = [self record: identifier in: @"entries"];
@@ -899,10 +950,16 @@ CLValidLedger (id data)
   return [self commit: backup error: error];
 }
 
++ (BOOL) isBillableEntry: (NSDictionary *)entry
+{
+  return ([entry objectForKey: @"billable"] == nil || [[entry objectForKey: @"billable"] boolValue])
+    && ![[entry objectForKey: @"externalBilling"] isEqual: @"Not billable"];
+}
+
 + (BOOL) isUnbilledEntry: (NSDictionary *)entry
 {
   NSString *billing = [entry objectForKey: @"externalBilling"];
-  return [[entry objectForKey: @"invoiceID"] length] == 0
+  return [self isBillableEntry: entry] && [[entry objectForKey: @"invoiceID"] length] == 0
     && (billing == nil || [billing isEqual: @"Billable"]);
 }
 
@@ -919,6 +976,7 @@ CLValidLedger (id data)
     return CLFail (error, @"Previously billed time cannot be changed.");
   backup = [self backup];
   [entry setObject: cents forKey: @"rate"];
+  [entry setObject: [NSNumber numberWithBool: billable] forKey: @"billable"];
   [entry setObject: billable ? @"Billable" : @"Not billable" forKey: @"externalBilling"];
   return [self commit: backup error: error];
 }
@@ -1241,6 +1299,12 @@ CLValidLedger (id data)
 - (BOOL) addTimeRows: (NSArray *)rows client: (NSString *)identifier
                task: (NSString *)taskID error: (NSString **)error
 {
+  return [self addTimeRows: rows client: identifier task: taskID billable: YES error: error];
+}
+
+- (BOOL) addTimeRows: (NSArray *)rows client: (NSString *)identifier
+               task: (NSString *)taskID billable: (BOOL)billable error: (NSString **)error
+{
   NSDictionary *client = [self clientWithID: identifier];
   NSDictionary *task = [self record: taskID in: @"tasks"];
   NSMutableArray *entries = [NSMutableArray array];
@@ -1290,6 +1354,7 @@ CLValidLedger (id data)
           [entry setObject: [row objectForKey: @"periodKind"] forKey: @"periodKind"];
           [entry setObject: [row objectForKey: @"periodEnd"] forKey: @"periodEnd"];
         }
+      [entry setObject: [NSNumber numberWithBool: billable] forKey: @"billable"];
       [entries addObject: entry];
     }
   if ([entries count] == 0)
@@ -1411,6 +1476,19 @@ CLValidLedger (id data)
   while ((key = [keys nextObject]) != nil)
     message = [message stringByReplacingOccurrencesOfString: key withString: [values objectForKey: key]];
   return message;
+}
+
++ (NSString *) paymentDaysForInvoice: (NSDictionary *)invoice onDate: (NSString *)date
+{
+  NSInteger days;
+  if ([[invoice objectForKey: @"paid"] boolValue]
+      || [[invoice objectForKey: @"paymentUnverified"] boolValue]
+      || [[invoice objectForKey: @"dueDateUnverified"] boolValue]
+      || [[self balanceForInvoice: invoice] longLongValue] <= 0
+      || !CLValidDate (date) || !CLValidDate ([invoice objectForKey: @"dueDate"])) return @"—";
+  days = CLDaysUntil (date, [invoice objectForKey: @"dueDate"]);
+  return days < 0 ? [NSString stringWithFormat: @"+%ld", (long)-days]
+    : [NSString stringWithFormat: @"%ld", (long)days];
 }
 
 - (NSString *) reminderStageForInvoice: (NSDictionary *)invoice onDate: (NSString *)date
