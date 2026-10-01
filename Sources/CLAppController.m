@@ -5,6 +5,8 @@
 #import "CLDateField.h"
 #import "CLInvoiceEditor.h"
 
+#include "CLAppearance.inc"
+
 static NSTextField *
 CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
 {
@@ -14,7 +16,12 @@ CLLabel (NSView *parent, NSString *text, NSRect frame, CGFloat size)
   [field setSelectable: NO];
   [field setBordered: NO];
   [field setDrawsBackground: NO];
-  [field setFont: [NSFont systemFontOfSize: size]];
+  [field setFont: size >= 20 ? [NSFont boldSystemFontOfSize: size] : [NSFont systemFontOfSize: size]];
+#ifdef __APPLE__
+  [field setTextColor: size >= 20 ? [NSColor labelColor] : [NSColor secondaryLabelColor]];
+#else
+  [field setTextColor: [NSColor controlTextColor]];
+#endif
   [parent addSubview: field];
   return field;
 }
@@ -24,6 +31,8 @@ CLField (NSView *parent, NSString *value, NSRect frame)
 {
   NSTextField *field = [[[NSTextField alloc] initWithFrame: frame] autorelease];
   [field setStringValue: value != nil ? value : @""];
+  [field setFont: [NSFont systemFontOfSize: 13]];
+  [field setBezelStyle: NSTextFieldRoundedBezel];
   [parent addSubview: field];
   return field;
 }
@@ -31,11 +40,14 @@ CLField (NSView *parent, NSString *value, NSRect frame)
 static NSButton *
 CLButton (NSView *parent, NSString *title, NSRect frame, id target, SEL action)
 {
-  NSButton *button = [[[NSButton alloc] initWithFrame: frame] autorelease];
+  BOOL primary = [title hasPrefix: @"Add"] || [title hasPrefix: @"Create Invoice"] ||
+    [title isEqual: @"Start Timer"] || [title isEqual: @"Save Business Details"];
+  NSButton *button = [[[(primary ? [CLPrimaryButton class] : [NSButton class]) alloc] initWithFrame: frame] autorelease];
   [button setTitle: title];
   [button setBezelStyle: NSRoundedBezelStyle];
   [button setTarget: target];
   [button setAction: action];
+  [button setFont: [NSFont systemFontOfSize: 13]];
   [parent addSubview: button];
   return button;
 }
@@ -180,19 +192,35 @@ CLLedgerPath (void)
   [appMenu addItemWithTitle: @"Quit Clock & Ledger" action: @selector(terminate:) keyEquivalent: @"q"];
   [item setSubmenu: appMenu];
   [NSApp setMainMenu: menu];
-  _window = [[NSWindow alloc] initWithContentRect: NSMakeRect (100, 100, 1040, 700)
+  _window = [[NSWindow alloc] initWithContentRect: NSMakeRect (100, 100, 1240, 760)
     styleMask: NSTitledWindowMask | NSClosableWindowMask | NSMiniaturizableWindowMask | NSResizableWindowMask
     backing: NSBackingStoreBuffered defer: NO];
   [_window setTitle: @"Clock & Ledger"];
-  [_window setMinSize: NSMakeSize (1040, 700)];
+  [_window setMinSize: NSMakeSize (1240, 760)];
   [_window setReleasedWhenClosed: NO];
-  [CLLabel ([_window contentView], @"Clock & Ledger", NSMakeRect (24, 642, 600, 36), 27)
+  [_window setContentView: [[[CLWorkspaceView alloc] initWithFrame: NSMakeRect (0, 0, 1240, 760)] autorelease]];
+  [CLLabel ([_window contentView], @"Clock & Ledger", NSMakeRect (236, 695, 700, 40), 30)
     setAutoresizingMask: NSViewMinYMargin];
-  _summaryLabel = CLLabel ([_window contentView], @"", NSMakeRect (24, 608, 980, 25), 13);
+  [CLLabel ([_window contentView], @"A little clarity for your working day.", NSMakeRect (238, 668, 800, 22), 13)
+    setAutoresizingMask: NSViewMinYMargin];
+  _summaryLabel = CLLabel ([_window contentView], @"", NSMakeRect (238, 626, 970, 28), 13);
   [_summaryLabel setAutoresizingMask: NSViewWidthSizable | NSViewMinYMargin];
-  tabs = [[[NSTabView alloc] initWithFrame: NSMakeRect (16, 16, 1008, 584)] autorelease];
+  tabs = [[[NSTabView alloc] initWithFrame: NSMakeRect (224, 28, 984, 574)] autorelease];
+  [tabs setTabViewType: NSNoTabsNoBorder];
+  [tabs setDrawsBackground: NO];
   [tabs setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
+  _workspaceTabs = tabs;
   [[_window contentView] addSubview: tabs];
+  {
+    NSTextField *brand = CLLabel ([_window contentView], @"C / L", NSMakeRect (24, 690, 150, 42), 28);
+    NSTextField *caption = CLLabel ([_window contentView], @"YOUR WORKSPACE", NSMakeRect (25, 636, 160, 22), 10);
+    NSTextField *footer = CLLabel ([_window contentView], @"Time well spent.\nBooks well kept.", NSMakeRect (24, 28, 155, 48), 12);
+    [brand setTextColor: [NSColor whiteColor]];
+    [caption setTextColor: [NSColor colorWithCalibratedWhite: 1 alpha: 0.5]];
+    [footer setTextColor: [NSColor colorWithCalibratedWhite: 1 alpha: 0.5]];
+    [brand setAutoresizingMask: NSViewMinYMargin];
+    [caption setAutoresizingMask: NSViewMinYMargin];
+  }
 
   view = [self tab: @"Clients" in: tabs];
   CLLabel (view, @"Your clients", NSMakeRect (18, 496, 600, 28), 20);
@@ -319,6 +347,7 @@ CLLedgerPath (void)
   CLButton (view, @"Delete Invoice…", NSMakeRect (712, 12, 180, 32), self, @selector(deleteInvoice:));
 
   view = [self tab: @"Company Finances" in: tabs];
+  CLLabel (view, @"Company finances", NSMakeRect (18, 515, 600, 28), 20);
   _financeMode = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 475, 260, 30) pullsDown: NO] autorelease];
   [_financeMode addItemsWithTitles: [NSArray arrayWithObjects: @"Bank accounts", @"Expenses & receipts", @"Invoice payments", nil]];
   [_financeMode setTarget: self]; [_financeMode setAction: @selector(financeChanged:)]; [view addSubview: _financeMode];
@@ -373,6 +402,19 @@ CLLedgerPath (void)
   CLButton (view, @"Save Business Details", NSMakeRect (184, 42, 220, 34), self, @selector(saveBusiness:));
   CLButton (view, @"Back Up Ledger…", NSMakeRect (410, 42, 190, 34), self, @selector(backupLedger:));
   CLButton (view, @"Import QuickBooks…", NSMakeRect (606, 42, 210, 34), self, @selector(importQuickBooks:));
+  for (i = 0; i < [[tabs tabViewItems] count]; i++)
+    {
+      CLNavigationButton *button = [[[CLNavigationButton alloc] initWithFrame: NSMakeRect (12, 570 - i * 50, 172, 44)] autorelease];
+      [button setTitle: [[[tabs tabViewItems] objectAtIndex: i] label]];
+      [button setButtonType: NSPushOnPushOffButton];
+      [button setBordered: NO];
+      [button setTag: i];
+      [button setState: i == 0 ? NSOnState : NSOffState];
+      [button setTarget: self];
+      [button setAction: @selector(selectWorkspace:)];
+      [button setAutoresizingMask: NSViewMinYMargin];
+      [[_window contentView] addSubview: button];
+    }
   /* Keep the editors above their expanding tables when resizing. */
   for (i = 0; i < [[tabs tabViewItems] count]; i++)
     {
@@ -381,7 +423,8 @@ CLLedgerPath (void)
       for (j = 0; j < [children count]; j++)
         {
           NSView *child = [children objectAtIndex: j];
-          if (![child isKindOfClass: [NSScrollView class]] && [child frame].origin.y > 100)
+          if (![child isKindOfClass: [NSScrollView class]] &&
+              ([child frame].origin.y > 100 || i == [[tabs tabViewItems] count] - 1))
             [child setAutoresizingMask: NSViewMinYMargin];
         }
     }
@@ -394,6 +437,18 @@ CLLedgerPath (void)
   [_window center];
   [_window makeKeyAndOrderFront: nil];
   [NSApp activateIgnoringOtherApps: YES];
+}
+
+- (void) selectWorkspace: (NSButton *)sender
+{
+  NSView *view;
+  [_workspaceTabs selectTabViewItemAtIndex: [sender tag]];
+  for (view in [[_window contentView] subviews])
+    if ([view isKindOfClass: [CLNavigationButton class]])
+      {
+        [(NSButton *)view setState: view == sender ? NSOnState : NSOffState];
+        [view setNeedsDisplay: YES];
+      }
 }
 
 - (NSView *) tab: (NSString *)title in: (NSTabView *)tabs
@@ -411,11 +466,15 @@ CLLedgerPath (void)
   NSScrollView *scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (18, 58, 940, 395)] autorelease];
   NSTableView *table = [[[NSTableView alloc] initWithFrame: [scroll bounds]] autorelease];
   unsigned int i;
-  [scroll setBorderType: NSBezelBorder];
+  [scroll setBorderType: NSLineBorder];
   [scroll setHasVerticalScroller: YES];
   [scroll setHasHorizontalScroller: YES];
   [scroll setAutoresizingMask: NSViewWidthSizable | NSViewHeightSizable];
-  [table setRowHeight: 27];
+  [table setRowHeight: 34];
+  [table setIntercellSpacing: NSMakeSize (12, 4)];
+  [table setUsesAlternatingRowBackgroundColors: YES];
+  [table setGridStyleMask: NSTableViewGridNone];
+  [table setBackgroundColor: [NSColor controlBackgroundColor]];
   [table setAllowsMultipleSelection: NO];
   for (i = 0; i < [columns count]; i++)
     {
@@ -425,6 +484,9 @@ CLLedgerPath (void)
       [[column headerCell] setStringValue: title];
       [column setWidth: [[widths objectAtIndex: i] doubleValue]];
       [column setEditable: NO];
+      [[column dataCell] setFont: [NSFont systemFontOfSize: 13]];
+      if ([[NSArray arrayWithObjects: @"rate", @"hours", @"amount", @"total", @"netDays", @"paymentDays", nil] containsObject: key])
+        [[column dataCell] setAlignment: NSRightTextAlignment];
       [table addTableColumn: column];
     }
   [table setDataSource: (id)self];
@@ -702,7 +764,7 @@ CLLedgerPath (void)
           [text setVerticallyResizable: YES];
           [text setHorizontallyResizable: NO];
           [[text textContainer] setWidthTracksTextView: YES];
-          [scroll setBorderType: NSBezelBorder];
+          [scroll setBorderType: NSLineBorder];
           [scroll setHasVerticalScroller: YES];
           [scroll setDocumentView: text];
           [[_dialog contentView] addSubview: scroll];
@@ -1262,7 +1324,7 @@ CLLedgerPath (void)
   [_dialog setReleasedWhenClosed: NO];
   scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (18, 65, 744, 515)] autorelease];
   [scroll setHasVerticalScroller: YES];
-  [scroll setBorderType: NSBezelBorder];
+  [scroll setBorderType: NSLineBorder];
   text = [[[NSTextView alloc] initWithFrame: NSMakeRect (0, 0, 720, 515)] autorelease];
   [text setEditable: NO];
   [text setFont: [NSFont systemFontOfSize: 13]];
@@ -1457,7 +1519,7 @@ CLLedgerPath (void)
   CLLabel ([_dialog contentView], @"Hours", NSMakeRect (396, 448, 160, 22), 12);
   scroll = [[[NSScrollView alloc] initWithFrame: NSMakeRect (18, 65, 654, 380)] autorelease];
   [scroll setHasVerticalScroller: YES];
-  [scroll setBorderType: NSBezelBorder];
+  [scroll setBorderType: NSLineBorder];
   document = [[[NSView alloc] initWithFrame: NSMakeRect (0, 0, 630, contentHeight)] autorelease];
   for (i = 0; i < [dates count]; i++)
     {

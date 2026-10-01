@@ -9,6 +9,7 @@
   NSTableView *_financeTable;
   NSPopUpButton *_financeMode;
   NSWindow *_window;
+  NSTabView *_workspaceTabs;
   NSTableView *_clientsTable;
   NSTableView *_timeTable;
   NSTableView *_tasksTable;
