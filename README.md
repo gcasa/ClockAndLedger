@@ -438,3 +438,47 @@ excludes active timers, and assigns a weekly/monthly total wholly to its start
 date rather than guessing how it was distributed across days.
 
 Regression checks: `make -f Makefile test-reports test-browsing`.
+
+
+## Monthly and recurring invoicing
+
+In **Clients**, select a client and open **Recurring Billing…**. Set Enabled to
+Yes, enter the **Next month YYYY-MM** to bill (for example `2026-09`), an
+**Issue day** from 1 to 28, a tax percentage, and any **Holiday dates** to exclude.
+With September and issue day 5, the app issues September's invoice on October 5.
+The next billing month advances after each successful run and is shown when you
+reopen the settings. Set Enabled to No to pause it.
+
+Holiday dates are an explicit list of `YYYY-MM-DD` values separated by commas,
+spaces or newlines. Maintain the list for your business, including observed
+holidays and future years. No national holiday calendar is assumed. Weekends
+remain eligible when billable time was recorded. An empty list excludes no dates.
+
+Checks run once per minute while the app is running, including with its window
+closed. After reopening or waking, it catches up completed months using their
+scheduled issue dates and the client's payment terms. The app does not run while
+quit or asleep. Each month produces at most one scheduled invoice; empty months
+advance without creating an invoice. Invoice creation and schedule advancement
+save together, so failed saves and restarts do not cause duplicate billing.
+Deleting a scheduled invoice does not reset the schedule. Late entries for an
+already processed month can be billed with **Invoice Month…**.
+
+In **Invoices**, select a client and choose **Invoice Month…** for one-off billing.
+Enter the month, holiday dates, tax and issue date. Holidays default to that
+client's saved recurring list. This bills only eligible unbilled time in that
+month at its recorded rates, across all tasks. It excludes nonbillable time,
+holiday dates, already billed time and unverified imported time. Due dates use
+the client's net payment terms. List search and filters do not alter this selection.
+
+Daily time is selected by its recorded date. Weekly/monthly totals are accepted
+only when wholly inside the month and containing no excluded holiday. If a total
+crosses a month boundary or holiday, billing stops for that client: replace the
+aggregate with accurate daily entries, then retry. Hours are never prorated or
+guessed. A running timer starting on or before the month's end also blocks billing
+until stopped and reviewed. Errors appear in the Invoices status message; other
+clients' schedules continue. Corrected schedules retry on the next check.
+
+Scheduled billing creates invoices without sending email. Existing manual email
+and approved payment-reminder behavior remains available.
+
+Regression checks: `make -f Makefile test-recurring`.

@@ -109,6 +109,15 @@
 - (BOOL) invoiceClient: (NSString *)identifier task: (NSString *)taskID
                 hours: (NSString *)hours tax: (NSString *)tax
            issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate error: (NSString **)error;
+/** Monthly schedule: enabled, nextMonth (YYYY-MM), day (1–28), tax, holidays (ISO dates).
+ * Each run bills the prior completed month; persisted progress prevents repeats. */
+- (BOOL) saveRecurringForClient: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+/** Invoice eligible time in one month, excluding explicit holiday dates.
+ * Ambiguous period totals require daily entries rather than guessed allocation. */
+- (BOOL) invoiceMonth: (NSString *)month client: (NSString *)identifier holidays: (NSArray *)holidays
+                 tax: (NSString *)tax issuedDate: (NSString *)issuedDate error: (NSString **)error;
+/** Catch up due monthly schedules. Returns per-client errors; no email is sent. */
+- (NSArray *) runRecurringOnDate: (NSString *)date;
 /** Per-client email settings. Empty messages use the built-in templates. */
 - (BOOL) saveRemindersForClient: (NSString *)identifier enabled: (BOOL)enabled
                    daysBefore: (NSString *)days message: (NSString *)message

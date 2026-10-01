@@ -252,6 +252,8 @@ CLLedgerPath (void)
   CLButton (view, @"Delete", NSMakeRect (254, 12, 100, 32), self, @selector(deleteClient:));
   CLButton (view, @"Email Reminders…", NSMakeRect (368, 12, 190, 32), self, @selector(editClientReminders:));
 
+  CLButton (view, @"Recurring Billing…", NSMakeRect (570, 12, 190, 32), self, @selector(editRecurring:));
+
   view = [self tab: @"Client Tasks" in: tabs];
   CLLabel (view, @"Tasks & hourly rates", NSMakeRect (18, 500, 700, 28), 20);
   _tasksClient = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (18, 453, 280, 28) pullsDown: NO] autorelease];
@@ -335,6 +337,7 @@ CLLedgerPath (void)
   [_issuedField setToolTip: @"YYYY-MM-DD. Changing this date recalculates the due date using the client's net payment days."];
   CLLabel (view, @"Due date", NSMakeRect (518, 430, 55, 22), 12);
   _dueField = [CLDateField fieldInView: view value: @"" frame: NSMakeRect (575, 429, 155, 26)];
+  CLButton (view, @"Invoice Month…", NSMakeRect (570, 345, 195, 30), self, @selector(invoiceMonth:));
   CLButton (view, @"Create Invoice", NSMakeRect (750, 424, 195, 34), self, @selector(createInvoice:));
   CLLabel (view, @"Hours", NSMakeRect (18, 389, 55, 24), 12);
   _invoiceHours = CLField (view, @"", NSMakeRect (78, 389, 130, 26));
@@ -1640,6 +1643,8 @@ CLLedgerPath (void)
   return [alert runModal] == NSAlertFirstButtonReturn;
 }
 
+#include "CLRecurringUI.inc"
+
 - (void) checkReminders: (id)sender
 {
   NSArray *invoices;
@@ -1647,13 +1652,28 @@ CLLedgerPath (void)
 #ifdef __APPLE__
   BOOL enabled = NO;
 #endif
+  if ([NSApp modalWindow] == nil && !_reminderPromptActive && _mailer == nil)
+    {
+      NSUInteger count = [[_ledger invoices] count];
+      NSArray *errors = [_ledger runRecurringOnDate: [CLLedger today]];
+      if (count != [[_ledger invoices] count]) [self refresh];
+      if ([errors count])
+        {
+          NSString *message = [@"Recurring billing needs review: " stringByAppendingString: [errors componentsJoinedByString: @"; "]];
+          [_mailStatus setStringValue: message];
+          [_mailStatus setToolTip: message];
+        }
+      else if ([[_mailStatus stringValue] hasPrefix: @"Recurring billing needs review:"])
+        { [_mailStatus setStringValue: @"Monthly billing is up to date."]; [_mailStatus setToolTip: nil]; }
+    }
   [_invoicesTable reloadData];
 #ifdef __APPLE__
   for (i = 0; i < [[_ledger clients] count]; i++)
-    if ([[[[_ledger clients] objectAtIndex: i] objectForKey: @"autoReminders"] boolValue]) enabled = YES;
+    if ([[[[_ledger clients] objectAtIndex: i] objectForKey: @"autoReminders"] boolValue]
+        || [[[[[_ledger clients] objectAtIndex: i] objectForKey: @"recurring"] objectForKey: @"enabled"] boolValue]) enabled = YES;
   if (enabled && _backgroundActivity == nil)
     _backgroundActivity = [[[NSProcessInfo processInfo] beginActivityWithOptions: NSActivityUserInitiatedAllowingIdleSystemSleep
-      reason: @"Check scheduled invoice reminders while the app runs in the background"] retain];
+      reason: @"Check scheduled invoices and payment reminders while the app runs in the background"] retain];
   if (!enabled && _backgroundActivity != nil)
     { [[NSProcessInfo processInfo] endActivity: _backgroundActivity]; [_backgroundActivity release]; _backgroundActivity = nil; }
 #else

@@ -116,6 +116,8 @@
 - (void) controlTextDidChange: (NSNotification *)notification;
 - (void) invoiceTaskChanged: (id)sender;
 - (void) editClientReminders: (id)sender;
+- (void) editRecurring: (id)sender;
+- (void) invoiceMonth: (id)sender;
 - (void) checkReminders: (id)sender;
 - (void) reviewReminder: (id)sender;
 - (BOOL) applicationShouldHandleReopen: (NSApplication *)application hasVisibleWindows: (BOOL)visible;

@@ -122,10 +122,41 @@ CLValidBusiness (id record)
             && [[record objectForKey: @"logoData"] length] <= 5 * 1024 * 1024));
 }
 
+static NSString *
+CLNextMonth (NSString *month)
+{
+  int year = [[month substringToIndex: 4] intValue];
+  int number = [[month substringFromIndex: 5] intValue] + 1;
+  if (number == 13) { year++; number = 1; }
+  return [NSString stringWithFormat: @"%04d-%02d", year, number];
+}
+
+static BOOL
+CLValidSchedule (id schedule)
+{
+  NSArray *holidays;
+  unsigned int i;
+  if (schedule == nil) return YES;
+  if (!CLFields (schedule, @"nextMonth,tax", @"enabled,day")
+      || [[schedule objectForKey: @"enabled"] intValue] > 1
+      || [[schedule objectForKey: @"day"] intValue] < 1
+      || [[schedule objectForKey: @"day"] intValue] > 28
+      || [[schedule objectForKey: @"nextMonth"] length] != 7
+      || !CLValidDate ([[schedule objectForKey: @"nextMonth"] stringByAppendingString: @"-01"])
+      || CLDecimal ([schedule objectForKey: @"tax"], 2) == nil
+      || [CLDecimal ([schedule objectForKey: @"tax"], 2) doubleValue] > 100) return NO;
+  holidays = [schedule objectForKey: @"holidays"];
+  if (![holidays isKindOfClass: [NSArray class]]) return NO;
+  for (i = 0; i < [holidays count]; i++)
+    if (!CLValidDate ([holidays objectAtIndex: i])) return NO;
+  return YES;
+}
+
 static BOOL
 CLValidClient (id record)
 {
   return CLFields (record, @"id,name,email,address", @"rate")
+    && CLValidSchedule ([record objectForKey: @"recurring"])
     && [[record objectForKey: @"id"] length] > 0
     && [[record objectForKey: @"name"] length] > 0
     && CLStartingNumber (record) > 0
@@ -358,6 +389,10 @@ CLValidLedger (id data)
 
 @interface CLLedger (Private)
 - (NSMutableDictionary *) record: (NSString *)identifier in: (NSString *)collection;
+- (BOOL) issueClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+           issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate
+             entryIDs: (NSSet *)entryIDs advanceMonth: (NSString *)advanceMonth error: (NSString **)error;
 - (NSMutableDictionary *) backup;
 - (BOOL) commit: (NSMutableDictionary *)backup error: (NSString **)error;
 @end
@@ -740,6 +775,15 @@ CLValidLedger (id data)
                 hours: (NSString *)hours tax: (NSString *)tax
            issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate error: (NSString **)error
 {
+  return [self issueClient: identifier task: taskID hours: hours tax: tax issuedDate: issuedDate
+    dueDate: dueDate entryIDs: nil advanceMonth: nil error: error];
+}
+
+- (BOOL) issueClient: (NSString *)identifier task: (NSString *)taskID
+                hours: (NSString *)hours tax: (NSString *)tax
+           issuedDate: (NSString *)issuedDate dueDate: (NSString *)dueDate
+             entryIDs: (NSSet *)entryIDs advanceMonth: (NSString *)advanceMonth error: (NSString **)error
+{
   NSDictionary *client = [self clientWithID: identifier];
   NSDictionary *task = [self record: taskID in: @"tasks"];
   NSDictionary *rateSource = task != nil ? task : client;
@@ -802,7 +846,8 @@ CLValidLedger (id data)
     {
       NSDictionary *entry = [[self entries] objectAtIndex: i];
       if ([[entry objectForKey: @"clientID"] isEqual: identifier]
-          && [CLLedger isUnbilledEntry: entry])
+          && [CLLedger isUnbilledEntry: entry]
+          && (entryIDs == nil || [entryIDs containsObject: [entry objectForKey: @"id"]]))
         {
           NSMutableDictionary *line = [NSMutableDictionary dictionaryWithDictionary: entry];
           NSNumber *amount = [CLLedger amountForSeconds: [entry objectForKey: @"seconds"] rate: [entry objectForKey: @"rate"]];
@@ -855,10 +900,19 @@ CLValidLedger (id data)
   for (i = 0; hours == nil && i < [lines count]; i++)
     [[self record: [[lines objectAtIndex: i] objectForKey: @"id"] in: @"entries"]
       setObject: invoiceID forKey: @"invoiceID"];
+  if (advanceMonth != nil)
+    {
+      [invoice setObject: [[client objectForKey: @"recurring"] objectForKey: @"nextMonth"] forKey: @"billingMonth"];
+      NSMutableDictionary *updatedSchedule = [NSMutableDictionary dictionaryWithDictionary: [client objectForKey: @"recurring"]];
+      [updatedSchedule setObject: advanceMonth forKey: @"nextMonth"];
+      [[self record: identifier in: @"clients"] setObject: updatedSchedule forKey: @"recurring"];
+    }
   [[_data objectForKey: @"invoices"] addObject: invoice];
   [_data setObject: [NSNumber numberWithInt: sequence + 1] forKey: @"nextInvoice"];
   return [self commit: backup error: error];
 }
+
+#include "CLRecurringLedger.inc"
 
 - (BOOL) hasIssuedInvoices
 {

@@ -92,3 +92,9 @@ test-browsing:
 	mkdir -p build
 	$(CC) $(CFLAGS) Tests/BrowsingTests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/BrowsingTests
 	./build/BrowsingTests
+
+.PHONY: test-recurring
+test-recurring:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/RecurringTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/RecurringTests
+	./build/RecurringTests
