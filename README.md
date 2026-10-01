@@ -265,7 +265,8 @@ running; its menu identifies the active client and work. **Stop Timer & Save Tim
 records the elapsed time in Timesheets. Only one timer can run at a time, shared
 with the main window, and archived tasks are excluded from the menu.
 
-Choose **Open Clock & Ledger** from the menu, or click its Dock icon, to reopen
+On macOS, the app starts with its main window hidden. Choose
+**Open Clock & Ledger** from the menu, or click its Dock icon, to open
 the window. Choose **Hide Dock Icon** in the menu bar menu to keep the app out
 of the Dock and Command-Tab switcher; **Show Dock Icon** restores it. This setting
 is remembered across launches. You can still open the window and control timers

@@ -454,8 +454,11 @@ CLLedgerPath (void)
   _pulse = [[NSTimer scheduledTimerWithTimeInterval: 1 target: self selector: @selector(tick:) userInfo: nil repeats: YES] retain];
   _reminderPulse = [[NSTimer scheduledTimerWithTimeInterval: 60 target: self selector: @selector(checkReminders:) userInfo: nil repeats: YES] retain];
   [_window center];
+#ifndef __APPLE__
+  /* macOS opens the workspace on demand from the menu bar. */
   [_window makeKeyAndOrderFront: nil];
   [NSApp activateIgnoringOtherApps: YES];
+#endif
 }
 
 - (void) selectWorkspace: (NSButton *)sender
