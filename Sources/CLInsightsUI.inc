@@ -6,6 +6,8 @@
       case 2: return [NSArray arrayWithObjects: @"name", @"count", @"expenses", nil];
       case 3: return [NSArray arrayWithObjects: @"name", @"billableHours", @"nonbillableHours", @"value", nil];
       case 4: return [NSArray arrayWithObjects: @"name", @"client", @"dueDate", @"outstanding", @"status", nil];
+      case 5: return [NSArray arrayWithObjects: @"name", @"proceeds", @"expenses", @"earnings", @"received", @"unsettled", @"developmentHours", @"sales", @"refunds", @"fees", nil];
+      case 6: return [NSArray arrayWithObjects: @"name", @"proceeds", @"expenses", @"earnings", @"received", @"developmentHours", nil];
       default: return [NSArray arrayWithObjects: @"name", @"received", @"expenses", @"net", nil];
     }
 }
@@ -17,6 +19,8 @@
       case 2: return [NSArray arrayWithObjects: @"Expense category", @"Transactions", @"Expenses", nil];
       case 3: return [NSArray arrayWithObjects: @"Client", @"Billable hours", @"Nonbillable hours", @"Billable value", nil];
       case 4: return [NSArray arrayWithObjects: @"Invoice", @"Client", @"Due date", @"Balance due now", @"Status", nil];
+      case 5: return [NSArray arrayWithObjects: @"App", @"Net proceeds", @"Expenses", @"Net earnings", @"Cash allocated", @"Unsettled now", @"Dev hours", @"Gross sales", @"Refunds", @"Fees", nil];
+      case 6: return [NSArray arrayWithObjects: @"Month / app", @"Net proceeds", @"Expenses", @"Net earnings", @"Cash allocated", @"Dev hours", nil];
       default: return [NSArray arrayWithObjects: @"Month", @"Received", @"Expenses", @"Net cash movement", nil];
     }
 }
@@ -82,7 +86,7 @@
   view = [self tab: @"Reports" in: tabs];
   CLLabel (view, @"Understand the numbers", NSMakeRect (18, 500, 900, 30), 22);
   CLLabel (view, @"Choose a report and inclusive date range, then export the results to CSV.", NSMakeRect (18, 472, 940, 24), 13);
-  _reportMode = [self insightPopupIn: view frame: NSMakeRect (18, 422, 230, 28) titles: [NSArray arrayWithObjects: @"Monthly cash flow", @"Client billing & receipts", @"Expense categories", @"Time by client", @"Current receivables", nil]];
+  _reportMode = [self insightPopupIn: view frame: NSMakeRect (18, 422, 230, 28) titles: [NSArray arrayWithObjects: @"Monthly cash flow", @"Client billing & receipts", @"Expense categories", @"Time by client", @"Current receivables", @"App performance", @"Apps by month", nil]];
   _reportCurrency = [self insightPopupIn: view frame: NSMakeRect (254, 422, 110, 28) titles: [NSArray array]];
   CLLabel (view, @"From", NSMakeRect (380, 425, 48, 24), 12);
   CLLabel (view, @"To", NSMakeRect (610, 425, 32, 24), 12);
@@ -104,6 +108,7 @@
   for (record in [_ledger invoices]) [currencies addObject: [[record objectForKey: @"business"] objectForKey: @"currency"]];
   for (record in [_ledger accounts]) [currencies addObject: [record objectForKey: @"currency"]];
   for (record in [_ledger expenses]) [currencies addObject: [record objectForKey: @"currency"]];
+  for (record in [_ledger appRevenue]) [currencies addObject: [record objectForKey: @"currency"]];
   [popup removeAllItems]; [popup addItemsWithTitles: [[currencies allObjects] sortedArrayUsingSelector: @selector(compare:)]];
   [popup selectItemWithTitle: previous ?: [[_ledger business] objectForKey: @"currency"]]; [previous release];
 }
@@ -152,6 +157,8 @@
     ([_reportMode indexOfSelectedItem] == 3 ? @"Time uses the entry START date (whole period totals; no prorating). Active timers are excluded. Value uses recorded rates." :
     ([_reportMode indexOfSelectedItem] == 1 ? @"Billed includes tax by issue date; receipts use payment dates. Outstanding is the CURRENT balance across all dates." :
     @"Receipts use payment dates; expenses use transaction dates. Net cash movement is not accounting profit."));
+  if ([_reportMode indexOfSelectedItem] >= 5)
+    detail = @"Proceeds: period end; cash: deposit date; costs: expense date. Earnings = proceeds − costs, before owner labor. Shared costs stay separate. Unsettled is current; dev hours are currency-independent. Blank breakdowns are unknown.";
   [_reportNote setStringValue: [NSString stringWithFormat: @"%@ • %@. %@\n%ld undated paid and %ld unverified invoices excluded from cash totals. Click a column heading to sort.", currency, [_reportMode indexOfSelectedItem] == 4 ? @"Current recorded balances" : [NSString stringWithFormat: @"%@ to %@", start, end], detail,
     (long)[[summary objectForKey: @"undated"] integerValue], (long)[[summary objectForKey: @"unverified"] integerValue]]];
   [_reportTable reloadData];
@@ -176,6 +183,6 @@
       [row setObject: [_reportNote stringValue] forKey: @"basis"]; [rows addObject: row];
     }
   panel = [NSSavePanel savePanel]; [panel setNameFieldStringValue: [NSString stringWithFormat: @"%@-%@.csv", [_reportMode titleOfSelectedItem], [_reportCurrency titleOfSelectedItem]]];
-  if ([panel runModal] == NSOKButton && ![[CLReporting csvForRows: rows keys: keys titles: titles moneyKeys: [NSArray arrayWithObjects: @"received", @"expenses", @"net", @"billed", @"outstanding", @"value", nil]] writeToURL: [panel URL] atomically: YES encoding: NSUTF8StringEncoding error: NULL])
+  if ([panel runModal] == NSOKButton && ![[CLReporting csvForRows: rows keys: keys titles: titles moneyKeys: [NSArray arrayWithObjects: @"received", @"expenses", @"net", @"billed", @"outstanding", @"value", @"proceeds", @"earnings", @"unsettled", @"sales", @"refunds", @"fees", nil]] writeToURL: [panel URL] atomically: YES encoding: NSUTF8StringEncoding error: NULL])
     [self showError: @"The report could not be saved. Choose a writable folder."];
 }

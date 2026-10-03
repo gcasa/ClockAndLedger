@@ -281,6 +281,8 @@ CLLedgerPath (void)
   CLLabel (view, @"Task / hourly rate", NSMakeRect (267, 480, 450, 18), 11);
   _timeTask = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (267, 451, 470, 28) pullsDown: NO] autorelease];
   [view addSubview: _timeTask];
+  [CLButton (view, @"Add Missing Entry…", NSMakeRect (747, 449, 211, 32), self, @selector(addMissingTime:))
+    setToolTip: @"Add hours for a specific work date using the selected client and task."];
   CLLabel (view, @"Work description (optional when using a task)", NSMakeRect (18, 429, 600, 18), 11);
   _taskField = CLField (view, @"", NSMakeRect (18, 400, 630, 26));
   CLButton (view, @"Start Timer", NSMakeRect (662, 396, 132, 34), self, @selector(startTimer:));
@@ -373,13 +375,15 @@ CLLedgerPath (void)
   [_financeMode addItemsWithTitles: [NSArray arrayWithObjects: @"Bank accounts", @"Expenses & receipts", @"Invoice payments", nil]];
   [_financeMode setTarget: self]; [_financeMode setAction: @selector(financeChanged:)]; [view addSubview: _financeMode];
   CLLabel (view, @"Balance = opening balance + recorded receipts − expenses. No bank synchronization.", NSMakeRect (290, 476, 665, 28), 12);
-  _financeTable = [self tableIn: view columns: [NSArray arrayWithObjects: @"name", @"date", @"vendor", @"category", @"amount", @"account", @"reference", @"receiptName", nil] widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 135], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 160], [NSNumber numberWithInt: 180], nil]];
+  _financeTable = [self tableIn: view columns: [NSArray arrayWithObjects: @"name", @"date", @"vendor", @"category", @"amount", @"account", @"reference", @"receiptName", @"app", nil] widths: [NSArray arrayWithObjects: [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 100], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 110], [NSNumber numberWithInt: 135], [NSNumber numberWithInt: 150], [NSNumber numberWithInt: 160], [NSNumber numberWithInt: 180], [NSNumber numberWithInt: 180], nil]];
   CLButton (view, @"Add…", NSMakeRect (18, 12, 100, 32), self, @selector(financeAdd:));
   CLButton (view, @"Edit…", NSMakeRect (122, 12, 100, 32), self, @selector(financeEdit:));
   CLButton (view, @"Delete…", NSMakeRect (226, 12, 100, 32), self, @selector(financeDelete:));
   CLButton (view, @"Attach Receipt…", NSMakeRect (334, 12, 165, 32), self, @selector(financeReceipt:));
   CLButton (view, @"Export CSV…", NSMakeRect (718, 12, 135, 32), self, @selector(financeExport:));
   CLButton (view, @"Export / Open Receipt…", NSMakeRect (505, 12, 205, 32), self, @selector(financeOpenReceipt:));
+
+  [self buildAppRevenueIn: tabs];
 
   view = [self tab: @"Business" in: tabs];
   CLLabel (view, @"Business & payment details", NSMakeRect (18, 496, 800, 28), 20);
@@ -542,16 +546,18 @@ CLLedgerPath (void)
 
 - (id) valueForRecord: (NSDictionary *)record column: (NSString *)key table: (NSTableView *)table
 {
+  if (table == _appRevenueTable) return [self appValue: record key: key];
   if (table == _reportTable || table == _dashboardTable)
     {
       id value = [record objectForKey: key];
-      if ([[NSArray arrayWithObjects: @"received", @"expenses", @"net", @"billed", @"outstanding", @"value", nil] containsObject: key])
-        return [CLLedger money: value ?: [NSNumber numberWithInt: 0]];
+      if ([[NSArray arrayWithObjects: @"received", @"expenses", @"net", @"billed", @"outstanding", @"value", @"proceeds", @"earnings", @"unsettled", @"sales", @"refunds", @"fees", nil] containsObject: key])
+        return (!value && [[NSArray arrayWithObjects: @"sales", @"refunds", @"fees", nil] containsObject: key]) ? @"" : [CLLedger money: value ?: [NSNumber numberWithInt: 0]];
       if ([key hasSuffix: @"Hours"]) return [NSString stringWithFormat: @"%.2f", [value doubleValue]];
       return value ?: @"";
     }
   if (table == _financeTable)
     {
+      if ([key isEqual: @"app"]) return [_financeMode indexOfSelectedItem] == 1 ? ([[_ledger ownedApp: [record objectForKey: @"appID"]] objectForKey: @"name"] ?: @"Shared / unassigned") : @"";
       if ([_financeMode indexOfSelectedItem] == 0)
         {
           if ([key isEqual: @"amount"]) return [NSString stringWithFormat: @"%@ %@", [record objectForKey: @"currency"], [CLLedger money: [_ledger balanceForAccount: [record objectForKey: @"id"]]]];
@@ -712,6 +718,7 @@ CLLedgerPath (void)
   [_summaryLabel setToolTip: [_summaryLabel stringValue]];
   [self refreshInsights: nil];
   [self financeChanged: nil];
+  [self appRevenueChanged: nil];
   [_clientsTable reloadData];
   [_timeTable reloadData];
   [_invoicesTable reloadData];
@@ -763,6 +770,22 @@ CLLedgerPath (void)
           [fields setObject: popup forKey: label];
           continue;
         }
+      if ([label isEqual: @"Owned app"] || [label isEqual: @"Revenue record"] || [label isEqual: @"App payout"])
+        {
+          NSPopUpButton *popup = [[[NSPopUpButton alloc] initWithFrame: NSMakeRect (180, y, 408, 40) pullsDown: NO] autorelease];
+          NSArray *choices = [label isEqual: @"Owned app"] ? [_ledger ownedApps] : ([label isEqual: @"Revenue record"] ? [_ledger appRevenue] : [_ledger appPayouts]);
+          NSDictionary *choice;
+          [popup addItemWithTitle: [label isEqual: @"Owned app"] ? @"Shared / unassigned" : @"Select a record"];
+          [[popup lastItem] setRepresentedObject: @""];
+          for (choice in choices)
+            {
+              NSString *title = [label isEqual: @"Owned app"] ? [NSString stringWithFormat: @"%@%@", [choice objectForKey: @"name"], [[choice objectForKey: @"archived"] boolValue] ? @" (archived)" : @""] :
+                [NSString stringWithFormat: @"%@ | %@ | %@ %@", [choice objectForKey: @"reference"], [choice objectForKey: @"date"], [choice objectForKey: @"currency"], [CLLedger money: [choice objectForKey: [label isEqual: @"Revenue record"] ? @"proceeds" : @"amount"]]];
+              [popup addItemWithTitle: title]; [[popup lastItem] setRepresentedObject: [choice objectForKey: @"id"]];
+              if ([[choice objectForKey: @"id"] isEqual: [values objectAtIndex: i]]) [popup selectItem: [popup lastItem]];
+            }
+          [[_dialog contentView] addSubview: popup]; [fields setObject: popup forKey: label]; continue;
+        }
       if ([label isEqual: @"Bank account"] || [label isEqual: @"Invoice"])
         {
           BOOL choosingInvoice = [label isEqual: @"Invoice"];
@@ -802,7 +825,7 @@ CLLedgerPath (void)
           [fields setObject: text forKey: label];
           continue;
         }
-      if ([label isEqual: @"Issued"] || [label isEqual: @"Due date"] || [label isEqual: @"Date"])
+      if ([label isEqual: @"Issued"] || [label isEqual: @"Due date"] || [label isEqual: @"Date"] || [label isEqual: @"Period start"] || [label isEqual: @"Period end"])
         field = [CLDateField fieldInView: [_dialog contentView] value: [values objectAtIndex: i] frame: NSMakeRect (180, y, 408, 45)];
       else
         field = CLField ([_dialog contentView], [values objectAtIndex: i], NSMakeRect (180, y, 408, 45));
@@ -947,6 +970,34 @@ CLLedgerPath (void)
         }
       [self showError: error];
       values = [NSArray arrayWithObjects: [form objectForKey: @"Description"], [form objectForKey: @"Total hours"], nil];
+    }
+}
+
+- (void) addMissingTime: (id)sender
+{
+  NSString *clientID = [self selectedClient: _timeClient];
+  NSString *taskID = [[_timeTask selectedItem] representedObject];
+  NSArray *labels = [NSArray arrayWithObjects: @"Date", @"Description", @"Hours", @"Billable (Yes / No)", nil];
+  NSArray *values = [NSArray arrayWithObjects: [_periodDate stringValue], [_taskField stringValue], @"1.00",
+    [_nonbillableTime state] == NSOnState ? @"No" : @"Yes", nil];
+  NSDictionary *form;
+  NSString *title;
+  if (clientID == nil)
+    { [self showError: @"Add a client first, then select it in the Timesheets tab."]; return; }
+  title = [NSString stringWithFormat: @"Add Missing Entry — %@ · %@",
+    [[_ledger clientWithID: clientID] objectForKey: @"name"], [_timeTask titleOfSelectedItem]];
+  while ((form = [self editForm: title labels: labels values: values]) != nil)
+    {
+      NSString *error = nil;
+      NSDictionary *row = [NSDictionary dictionaryWithObjectsAndKeys:
+        [form objectForKey: @"Date"], @"date", [form objectForKey: @"Description"], @"description",
+        [form objectForKey: @"Hours"], @"hours", nil];
+      if ([_ledger addTimeRows: [NSArray arrayWithObject: row] client: clientID task: taskID
+        billable: [[[form objectForKey: @"Billable (Yes / No)"] lowercaseString] isEqual: @"yes"] error: &error])
+        { [self refresh]; break; }
+      [self showError: error];
+      values = [NSArray arrayWithObjects: [form objectForKey: @"Date"], [form objectForKey: @"Description"],
+        [form objectForKey: @"Hours"], [form objectForKey: @"Billable (Yes / No)"], nil];
     }
 }
 
@@ -1643,6 +1694,7 @@ CLLedgerPath (void)
   return [alert runModal] == NSAlertFirstButtonReturn;
 }
 
+#include "CLAppRevenueUI.inc"
 #include "CLRecurringUI.inc"
 
 - (void) checkReminders: (id)sender

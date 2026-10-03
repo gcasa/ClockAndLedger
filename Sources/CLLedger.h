@@ -183,6 +183,23 @@
 + (NSString *) paymentDaysForInvoice: (NSDictionary *)invoice onDate: (NSString *)date;
 /** Calculate a line amount, rounded half up to cents. */
 + (NSNumber *) amountForSeconds: (NSNumber *)seconds rate: (NSNumber *)rate;
+/** Owned apps, proceeds, bank deposits and noninvoiceable development time. */
+- (NSArray *) ownedApps;
+- (NSArray *) appRevenue;
+- (NSArray *) appPayouts;
+- (NSArray *) appTime;
+- (NSDictionary *) ownedApp: (NSString *)identifier;
+- (BOOL) saveOwnedApp: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) saveAppRevenue: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) saveAppPayout: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) saveAppTime: (NSString *)identifier values: (NSDictionary *)values error: (NSString **)error;
+/** Allocate source-currency proceeds and explicit bank-currency cash to a payout. */
+- (BOOL) saveAppAllocation: (NSString *)identifier payout: (NSString *)payoutID values: (NSDictionary *)values error: (NSString **)error;
+- (BOOL) deleteAppAllocation: (NSString *)identifier payout: (NSString *)payoutID error: (NSString **)error;
+- (NSNumber *) settledAppRevenue: (NSString *)identifier;
+- (BOOL) deleteAppRecord: (NSString *)identifier collection: (NSString *)collection error: (NSString **)error;
+/** Preview or atomically commit normalized CSV or Apple financial TSV; duplicates skipped. */
+- (BOOL) importAppRevenueData: (NSData *)data commit: (BOOL)commit report: (NSString **)report error: (NSString **)error;
 - (NSArray *) accounts;
 - (NSArray *) expenses;
 + (NSNumber *) receivedForInvoice: (NSDictionary *)invoice;

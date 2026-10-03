@@ -76,6 +76,10 @@ The app is created at `build/ClockAndLedger.app`. It is a local unsigned build.
    optional notes. Start/stop the timer, or choose **Day**, **Week** or **Month**,
    enter a date within that period, choose an entry method and click **Add Time…**.
    **One total for period** creates one entry for the entire range.
+   To fill in missed work, click **Add Missing Entry…** next to the task selector,
+   choose the work date, enter decimal hours and a description, and save. This adds
+   a single daily entry for the selected client and task, regardless of the period
+   or entry method. You can also change billability in this dialog.
    Check **Nonbillable time (lunch, breaks, etc.)** before **Add Time…** to record
    manual hours that count toward total time but never appear on invoices. This also
    applies to every row saved in **Daily timesheet**; timers remain billable.
@@ -482,3 +486,21 @@ Scheduled billing creates invoices without sending email. Existing manual email
 and approved payment-reminder behavior remains available.
 
 Regression checks: `make -f Makefile test-recurring`.
+
+## Owned apps and App Store revenue
+
+**Apps & Revenue** tracks owned apps, manual or imported revenue, bank payouts,
+payout allocations and noninvoiceable development hours. Assign expenses to an
+app in Company Finances, then use **Reports → App performance** or **Apps by
+month** to compare proceeds, expenses, earnings and hours. Actual bank payouts
+also appear in dashboard cash flow; proceeds are not counted again as cash.
+
+The importer supports standard Apple financial CSV/TSV reports and a normalized
+CSV template, with review, duplicate detection and atomic saves. Apps' SKU and
+subscription/product IDs map reports to the right app. Optional gross sales,
+refunds and fees can be recorded without inventing missing breakdowns.
+
+[Workflow, payout reconciliation, import formats and limitations](Documentation/App-revenue.md).
+[Example revenue CSV](Documentation/App-revenue-template.csv).
+
+Regression checks: `make -f Makefile test-app-revenue test-app-revenue-ui`.

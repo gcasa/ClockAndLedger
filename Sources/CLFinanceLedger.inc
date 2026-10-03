@@ -20,6 +20,7 @@
   NSDictionary *invoice, *payment, *expense;
   for (invoice in [self invoices]) for (payment in [invoice objectForKey: @"payments"])
     if ([[payment objectForKey: @"accountID"] isEqual: identifier]) balance += [[payment objectForKey: @"amount"] longLongValue];
+  for (payment in [self appPayouts]) if ([[payment objectForKey: @"accountID"] isEqual: identifier]) balance += [[payment objectForKey: @"amount"] longLongValue];
   for (expense in [self expenses]) if ([[expense objectForKey: @"accountID"] isEqual: identifier]) balance -= [[expense objectForKey: @"amount"] longLongValue];
   return [NSNumber numberWithLongLong: balance];
 }

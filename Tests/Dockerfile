@@ -39,3 +39,8 @@ RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
     gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
     Tests/RecurringTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
     -o /tmp/RecurringTests $(gnustep-config --base-libs) && /tmp/RecurringTests
+
+RUN . /usr/share/GNUstep/Makefiles/GNUstep.sh && \
+    gcc $(gnustep-config --objc-flags) -std=gnu89 -ISources \
+    Tests/AppRevenueTests.m Sources/CLReporting.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m \
+    -o /tmp/AppRevenueTests $(gnustep-config --base-libs) && /tmp/AppRevenueTests

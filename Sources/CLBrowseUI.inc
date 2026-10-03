@@ -4,11 +4,12 @@
   if (table == _dashboardTable) return [_dashboardReport objectForKey: @"monthly"] ?: [NSArray array];
   if (table == _reportTable)
     {
-      NSArray *keys = [NSArray arrayWithObjects: @"monthly", @"clients", @"categories", @"time", @"receivables", nil];
+      NSArray *keys = [NSArray arrayWithObjects: @"monthly", @"clients", @"categories", @"time", @"receivables", @"apps", @"appMonthly", nil];
       NSInteger index = [_reportMode indexOfSelectedItem];
       return [_reportData objectForKey: [keys objectAtIndex: MAX (0, index)]] ?: [NSArray array];
     }
   if (table == _financeTable) return [self financeRows];
+  if (table == _appRevenueTable) return [self appRevenueRows];
   if (table == _clientsTable) return [_ledger clients];
   if (table == _timeTable) return [_ledger entries];
   if (table == _tasksTable) return [_ledger tasksForClient: [self selectedClient: _tasksClient] includeArchived: YES];
@@ -33,7 +34,7 @@
 
 - (void) setupBrowsing
 {
-  NSArray *tables = [NSArray arrayWithObjects: _clientsTable, _tasksTable, _timeTable, _invoicesTable, _financeTable, nil];
+  NSArray *tables = [NSArray arrayWithObjects: _clientsTable, _tasksTable, _timeTable, _invoicesTable, _financeTable, _appRevenueTable, nil];
   CLRecordTable *table;
   for (table in tables)
     {
@@ -51,7 +52,7 @@
       else if (table == _timeTable) statuses = [NSArray arrayWithObjects: @"All time", @"Unbilled", @"Billed", @"Nonbillable", @"Needs review", nil];
       else if (table == _invoicesTable) statuses = [NSArray arrayWithObjects: @"All invoices", @"Outstanding", @"Overdue", @"Paid", @"Partial", @"Overpaid", @"Needs review", nil];
       else if (table == _financeTable) statuses = [NSArray arrayWithObjects: @"All records", @"Has receipt", @"Missing receipt", nil];
-      else statuses = [NSArray arrayWithObject: @"All clients"];
+      else statuses = [NSArray arrayWithObject: table == _appRevenueTable ? @"All records" : @"All clients"];
       [table->statusFilter addItemsWithTitles: statuses];
       [table->statusFilter setEnabled: [statuses count] > 1];
       [table->statusFilter setTarget: self]; [table->statusFilter setAction: @selector(browseChanged:)];
@@ -89,6 +90,7 @@
 
 - (id) sortValueForRecord: (NSDictionary *)record key: (NSString *)key table: (NSTableView *)table
 {
+  if (table == _appRevenueTable && [[NSArray arrayWithObjects: @"proceeds", @"amount", @"received", @"sales", @"refunds", @"fees", @"unsettled", @"unallocated", nil] containsObject: key]) return [record objectForKey: key] ?: [NSNumber numberWithInt: 0];
   if (table == _reportTable || table == _dashboardTable) return [record objectForKey: key] ?: [NSNumber numberWithInt: 0];
   if ([key isEqual: @"hours"]) return [record objectForKey: @"seconds"];
   if ([key isEqual: @"rate"] || [key isEqual: @"total"]) return [record objectForKey: key];
@@ -141,6 +143,7 @@
       [table->dateFilter setEnabled: [_financeMode indexOfSelectedItem] != 0];
       if (!expenses) { [table->statusFilter selectItemAtIndex: 0]; status = [table->statusFilter titleOfSelectedItem]; }
     }
+  if (table == _appRevenueTable) [table->dateFilter setEnabled: [_appRevenueMode indexOfSelectedItem] != 0];
   for (record in raw)
     {
       BOOL matches = YES;

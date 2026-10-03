@@ -6,6 +6,10 @@
 @interface CLAppController : NSObject
 {
   CLLedger *_ledger;
+  NSTableView *_appRevenueTable;
+  NSPopUpButton *_appRevenueMode;
+  NSPopUpButton *_ownedAppFilter;
+  NSTextField *_appRevenueNote;
   NSTableView *_financeTable;
   NSPopUpButton *_financeMode;
   NSWindow *_window;
@@ -75,6 +79,19 @@
   NSDistributedLock *_lock;
   BOOL _ownsLock;
 }
+- (void) buildAppRevenueIn: (NSTabView *)tabs;
+- (void) appRevenueChanged: (id)sender;
+- (void) appRevenueAdd: (id)sender;
+- (void) appRevenueEdit: (id)sender;
+- (void) appRevenueDelete: (id)sender;
+- (void) appRevenueBreakdown: (id)sender;
+- (void) appRevenueImport: (id)sender;
+- (void) appRevenueExport: (id)sender;
+- (NSArray *) appRevenueRows;
+- (NSArray *) appRevenueKeys;
+- (NSArray *) appRevenueTitles;
+- (void) editAppRecord: (NSDictionary *)record;
+- (id) appValue: (NSDictionary *)record key: (NSString *)key;
 /** Initialize UI and ledger after the application has launched. */
 - (void) applicationDidFinishLaunching: (NSNotification *)notification;
 /** Release the single-writer lock when the application quits. */
@@ -101,6 +118,8 @@
 - (void) periodChanged: (id)sender;
 /** Add a day/week/month total or open the daily timesheet for that period. */
 - (void) addTime: (id)sender;
+/** Add a missing daily entry with an explicit work date. */
+- (void) addMissingTime: (id)sender;
 /** Delete selected unbilled time after confirmation. */
 - (void) deleteTime: (id)sender;
 /** Edit the selected uninvoiced time entry. */

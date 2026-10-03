@@ -32,6 +32,7 @@ static NSArray *CLSortedGroups (NSDictionary *groups)
   NSMutableDictionary *categories = [NSMutableDictionary dictionary], *time = [NSMutableDictionary dictionary];
   NSMutableArray *receivables = [NSMutableArray array];
   NSDictionary *invoice, *payment, *expense, *entry;
+  NSArray *appPerformance, *appMonthly;
   for (invoice in [ledger invoices])
     {
       NSString *clientID = [invoice objectForKey: @"clientID"] ?: [[invoice objectForKey: @"client"] objectForKey: @"id"] ?: @"unknown";
@@ -95,6 +96,7 @@ static NSArray *CLSortedGroups (NSDictionary *groups)
             if (billable) CLAdd (row, @"value", amount);
           }
       }
+#include "CLAppRevenueReporting.inc"
   {
     NSMutableDictionary *row;
     CLAdd (summary, @"net", [[summary objectForKey: @"received"] longLongValue] - [[summary objectForKey: @"expenses"] longLongValue]);
@@ -106,7 +108,7 @@ static NSArray *CLSortedGroups (NSDictionary *groups)
       }
   }
   return [NSDictionary dictionaryWithObjectsAndKeys: summary, @"summary", CLSortedGroups (months), @"monthly",
-    CLSortedGroups (clients), @"clients", CLSortedGroups (categories), @"categories", CLSortedGroups (time), @"time", receivables, @"receivables", nil];
+    CLSortedGroups (clients), @"clients", CLSortedGroups (categories), @"categories", CLSortedGroups (time), @"time", receivables, @"receivables", appPerformance, @"apps", appMonthly, @"appMonthly", nil];
 }
 + (NSString *) csvForRows: (NSArray *)rows keys: (NSArray *)keys titles: (NSArray *)titles moneyKeys: (NSArray *)moneyKeys
 {
@@ -119,7 +121,7 @@ static NSArray *CLSortedGroups (NSDictionary *groups)
       for (key in keys)
         {
           id value = [row objectForKey: key] ?: @"";
-          if ([moneyKeys containsObject: key]) value = [CLLedger money: value];
+          if ([moneyKeys containsObject: key] && !([[NSArray arrayWithObjects: @"sales", @"refunds", @"fees", nil] containsObject: key] && ![value isKindOfClass: [NSNumber class]])) value = [CLLedger money: value];
           [values addObject: [value description]];
         }
       [all addObject: values];

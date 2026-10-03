@@ -98,3 +98,21 @@ test-recurring:
 	mkdir -p build
 	$(CC) $(CFLAGS) Tests/RecurringTests.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/RecurringTests
 	./build/RecurringTests
+
+.PHONY: test-app-revenue
+test-app-revenue:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/AppRevenueTests.m Sources/CLReporting.m Sources/CLLedger.m Sources/CLQuickBooksImporter.m -framework Foundation -o build/AppRevenueTests
+	./build/AppRevenueTests
+
+.PHONY: test-app-revenue-ui
+test-app-revenue-ui:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/AppRevenueUITests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/AppRevenueUITests
+	./build/AppRevenueUITests
+
+.PHONY: test-time-ui
+test-time-ui:
+	mkdir -p build
+	$(CC) $(CFLAGS) Tests/TimeEntryUITests.m $(filter-out Sources/main.m,$(SOURCES)) -framework Cocoa -o build/TimeEntryUITests
+	./build/TimeEntryUITests

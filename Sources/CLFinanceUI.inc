@@ -74,8 +74,8 @@
         { [self editPaymentForInvoice: invoice payment: [record objectForKey: @"id"] ? record : nil]; return; }
       return;
     }
-  labels = mode == 0 ? [NSArray arrayWithObjects: @"Account name", @"Bank name", @"Account number", @"Routing / IBAN", @"Currency", @"Opening balance", @"Notes", nil] : [NSArray arrayWithObjects: @"Date", @"Vendor / payee", @"Category", @"Amount paid", @"Bank account", @"Reference", @"Business purpose / notes", nil];
-  keys = mode == 0 ? [NSArray arrayWithObjects: @"name", @"bank", @"number", @"routing", @"currency", @"openingBalance", @"notes", nil] : [NSArray arrayWithObjects: @"date", @"vendor", @"category", @"amount", @"accountID", @"reference", @"notes", nil];
+  labels = mode == 0 ? [NSArray arrayWithObjects: @"Account name", @"Bank name", @"Account number", @"Routing / IBAN", @"Currency", @"Opening balance", @"Notes", nil] : [NSArray arrayWithObjects: @"Date", @"Vendor / payee", @"Category", @"Amount paid", @"Bank account", @"Reference", @"Business purpose / notes", @"Owned app", nil];
+  keys = mode == 0 ? [NSArray arrayWithObjects: @"name", @"bank", @"number", @"routing", @"currency", @"openingBalance", @"notes", nil] : [NSArray arrayWithObjects: @"date", @"vendor", @"category", @"amount", @"accountID", @"reference", @"notes", @"appID", nil];
   for (key in keys)
     { id value = [record objectForKey: key];
       if ([key isEqual: @"openingBalance"] || [key isEqual: @"amount"]) value = [CLLedger money: value ?: [NSNumber numberWithInt: 0]];
@@ -132,7 +132,7 @@
 - (void) financeExport: (id)sender
 {
   NSSavePanel *panel = [NSSavePanel savePanel];
-  NSMutableString *csv = [NSMutableString stringWithString: @"Date,Vendor,Category,Currency,Amount,Account,Reference,Business purpose,Receipt\r\n"];
+  NSMutableString *csv = [NSMutableString stringWithString: @"Date,Vendor,Category,Currency,Amount,Account,Reference,Business purpose,Receipt,App\r\n"];
   NSDictionary *expense, *account;
   [panel setNameFieldStringValue: @"Company-expenses.csv"];
   for (expense in [_ledger expenses])
@@ -140,7 +140,7 @@
       NSString *accountName = @"", *value;
       NSArray *values; NSMutableArray *quoted = [NSMutableArray array];
       for (account in [_ledger accounts]) if ([[account objectForKey: @"id"] isEqual: [expense objectForKey: @"accountID"]]) accountName = [account objectForKey: @"name"];
-      values = [NSArray arrayWithObjects: [expense objectForKey: @"date"], [expense objectForKey: @"vendor"], [expense objectForKey: @"category"], [expense objectForKey: @"currency"], [CLLedger money: [expense objectForKey: @"amount"]], accountName, [expense objectForKey: @"reference"], [expense objectForKey: @"notes"], [expense objectForKey: @"receiptName"] ?: @"", nil];
+      values = [NSArray arrayWithObjects: [expense objectForKey: @"date"], [expense objectForKey: @"vendor"], [expense objectForKey: @"category"], [expense objectForKey: @"currency"], [CLLedger money: [expense objectForKey: @"amount"]], accountName, [expense objectForKey: @"reference"], [expense objectForKey: @"notes"], [expense objectForKey: @"receiptName"] ?: @"", [[_ledger ownedApp: [expense objectForKey: @"appID"]] objectForKey: @"name"] ?: @"Shared / unassigned", nil];
       for (value in values)
         {
           if ([value length] && [@"=+-@\t\r\n" rangeOfString: [value substringToIndex: 1]].location != NSNotFound) value = [@"'" stringByAppendingString: value];

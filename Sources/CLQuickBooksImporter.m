@@ -361,6 +361,8 @@ QBInvoice (NSDictionary *record, NSArray *splits, BOOL iif, NSSet *taxItems,
 }
 
 @implementation CLQuickBooksImporter
++ (NSArray *) delimitedRows: (NSString *)text separator: (unichar)separator error: (NSString **)error
+{ return QBRows (text, separator, error); }
 
 + (NSDictionary *) recordsFromData: (NSData *)data filename: (NSString *)filename error: (NSString **)error
 {

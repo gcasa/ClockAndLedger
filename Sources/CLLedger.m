@@ -252,6 +252,7 @@ CLDaysUntil (NSString *date, NSString *due)
 }
 
 #include "CLFinanceValidation.inc"
+#include "CLAppRevenueValidation.inc"
 
 static BOOL
 CLValidLedger (id data)
@@ -384,7 +385,7 @@ CLValidLedger (id data)
       && (!CLFields (timer, @"taskID,taskName", @"")
           || ![[taskClients objectForKey: [timer objectForKey: @"taskID"]] isEqual: [timer objectForKey: @"clientID"]]))
     return NO;
-  return CLValidFinance (data);
+  return CLValidFinance (data) && CLValidAppRevenue (data);
 }
 
 @interface CLLedger (Private)
@@ -493,7 +494,7 @@ CLValidLedger (id data)
 
 - (BOOL) commit: (NSMutableDictionary *)backup error: (NSString **)error
 {
-  if (!CLValidFinance (_data))
+  if (!CLValidFinance (_data) || !CLValidAppRevenue (_data))
     { [_data release]; _data = [backup retain]; return CLFail (error, @"Financial records are invalid. The change was rolled back."); }
   NSError *failure = nil;
   NSData *bytes = [NSPropertyListSerialization dataWithPropertyList: _data
@@ -1858,4 +1859,5 @@ CLValidLedger (id data)
 }
 
 #include "CLFinanceLedger.inc"
+#include "CLAppRevenueLedger.inc"
 @end

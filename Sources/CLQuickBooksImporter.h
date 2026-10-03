@@ -3,6 +3,8 @@
 /** Reads QuickBooks text exports without changing the ledger. Native company
  * databases and backups are deliberately rejected with export instructions. */
 @interface CLQuickBooksImporter : NSObject
+/** Shared strict CSV/TSV tokenizer, including quoted delimiters and newlines. */
++ (NSArray *) delimitedRows: (NSString *)text separator: (unichar)separator error: (NSString **)error;
 /** Parse UTF-8, UTF-16 BOM or Windows-1252 IIF/CSV data into normalized client,
  * time and invoice records. Unsupported IIF sections are listed in warnings;
  * malformed supported records fail the entire import with a record number. */
